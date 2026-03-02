@@ -18,6 +18,13 @@ for arg in "$@"; do
             echo "" >&2
             exit 1
             ;;
+        -mpy_compile|-m\ py_compile|py_compile)
+            echo "Error: 'python3 -m py_compile' is disabled because it writes .pyc files to __pycache__." >&2
+            echo "" >&2
+            echo "  To verify syntax without bytecode output: uv run python -m ast path/to/file.py >/dev/null" >&2
+            echo "" >&2
+            exit 1
+            ;;
     esac
 done
 
@@ -38,6 +45,13 @@ for arg in "$@"; do
                 echo "Error: 'python3 -m venv' is disabled. Use uv instead:" >&2
                 echo "" >&2
                 echo "  To create a virtual environment: uv venv" >&2
+                echo "" >&2
+                exit 1
+                ;;
+            py_compile)
+                echo "Error: 'python3 -m py_compile' is disabled because it writes .pyc files to __pycache__." >&2
+                echo "" >&2
+                echo "  To verify syntax without bytecode output: uv run python -m ast path/to/file.py >/dev/null" >&2
                 echo "" >&2
                 exit 1
                 ;;
