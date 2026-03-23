@@ -16,7 +16,22 @@
   ],
   "pi": {
     "extensions": [
-      "./pi-extensions"
+      "./pi-extensions/answer.ts",
+      "./pi-extensions/btw.ts",
+      "./pi-extensions/context.ts",
+      "./pi-extensions/control.ts",
+      "./pi-extensions/files.ts",
+      "./pi-extensions/go-to-bed.ts",
+      "./pi-extensions/loop.ts",
+      "./pi-extensions/multi-edit.ts",
+      "./pi-extensions/notify.ts",
+      "./pi-extensions/precise-edit.ts",
+      "./pi-extensions/prompt-editor.ts",
+      "./pi-extensions/review.ts",
+      "./pi-extensions/session-breakdown.ts",
+      "./pi-extensions/todos.ts",
+      "./pi-extensions/uv.ts",
+      "./pi-extensions/whimsical.ts"
     ],
     "skills": [
       "./skills"
