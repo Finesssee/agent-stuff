@@ -4,6 +4,14 @@ import path from "node:path";
 
 export type OrchestratorRunVerdict = "approved" | "revise" | "escalated" | "failed";
 
+export type OrchestratorTimelineEvent = {
+	kind: "phase" | "progress" | "verdict" | "mission" | "error";
+	label: string;
+	detail?: string;
+	at: number;
+	phase?: string;
+};
+
 export type OrchestratorRunRecord = {
 	version: 1;
 	runId: string;
@@ -13,6 +21,7 @@ export type OrchestratorRunRecord = {
 	reviewerSummary?: string;
 	blockingFindings: string[];
 	phase: string;
+	currentStep?: string;
 	status: "running" | "completed" | "failed" | "escalated";
 	verdict?: OrchestratorRunVerdict;
 	workerCount: number;
@@ -26,6 +35,7 @@ export type OrchestratorRunRecord = {
 	startedAt: number;
 	updatedAt: number;
 	errorText?: string;
+	timeline: OrchestratorTimelineEvent[];
 };
 
 export type OrchestratorRuntimeState = {
@@ -66,7 +76,29 @@ export function getOrchestratorRunMarkdownPath(runId: string): string {
 	return path.join(getOrchestratorRunsDir(), `${runId}.md`);
 }
 
-function normalizeRunRecord(value: unknown): OrchestratorRunRecord | undefined {
+function normalizeTimelineEvent(value: unknown): OrchestratorTimelineEvent | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const record = value as Record<string, unknown>;
+	const label = typeof record.label === "string" && record.label.trim() ? record.label.trim() : undefined;
+	if (!label) return undefined;
+	const kind =
+		record.kind === "phase" ||
+		record.kind === "progress" ||
+		record.kind === "verdict" ||
+		record.kind === "mission" ||
+		record.kind === "error"
+			? record.kind
+			: "progress";
+	return {
+		kind,
+		label,
+		detail: typeof record.detail === "string" && record.detail.trim() ? record.detail.trim() : undefined,
+		at: typeof record.at === "number" && Number.isFinite(record.at) ? record.at : Date.now(),
+		phase: typeof record.phase === "string" && record.phase.trim() ? record.phase.trim() : undefined,
+	};
+}
+
+export function normalizeOrchestratorRunRecord(value: unknown): OrchestratorRunRecord | undefined {
 	if (!value || typeof value !== "object") return undefined;
 	const record = value as Record<string, unknown>;
 	const runId = typeof record.runId === "string" && record.runId.trim() ? record.runId.trim() : undefined;
@@ -93,6 +125,7 @@ function normalizeRunRecord(value: unknown): OrchestratorRunRecord | undefined {
 			? record.blockingFindings.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
 			: [],
 		phase,
+		currentStep: typeof record.currentStep === "string" && record.currentStep.trim() ? record.currentStep.trim() : undefined,
 		status,
 		verdict,
 		workerCount: typeof record.workerCount === "number" && Number.isFinite(record.workerCount) ? Math.max(0, Math.round(record.workerCount)) : 0,
@@ -108,6 +141,12 @@ function normalizeRunRecord(value: unknown): OrchestratorRunRecord | undefined {
 		startedAt: typeof record.startedAt === "number" && Number.isFinite(record.startedAt) ? record.startedAt : Date.now(),
 		updatedAt: typeof record.updatedAt === "number" && Number.isFinite(record.updatedAt) ? record.updatedAt : Date.now(),
 		errorText: typeof record.errorText === "string" && record.errorText.trim() ? record.errorText.trim() : undefined,
+		timeline: Array.isArray(record.timeline)
+			? record.timeline
+				.map((item) => normalizeTimelineEvent(item))
+				.filter((item): item is OrchestratorTimelineEvent => Boolean(item))
+				.slice(-24)
+			: [],
 	};
 }
 
@@ -115,8 +154,8 @@ export function normalizeOrchestratorRuntimeState(value: unknown): OrchestratorR
 	const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 	return {
 		version: 1,
-		activeRun: normalizeRunRecord(record.activeRun),
-		lastRun: normalizeRunRecord(record.lastRun),
+		activeRun: normalizeOrchestratorRunRecord(record.activeRun),
+		lastRun: normalizeOrchestratorRunRecord(record.lastRun),
 	};
 }
 
@@ -142,9 +181,9 @@ export async function writeOrchestratorRuntimeState(state: OrchestratorRuntimeSt
 
 export async function upsertActiveRun(record: OrchestratorRunRecord): Promise<void> {
 	const state = await readOrchestratorRuntimeState();
-	state.activeRun = normalizeRunRecord(record);
+	state.activeRun = normalizeOrchestratorRunRecord(record);
 	if (!state.lastRun || state.lastRun.runId === record.runId) {
-		state.lastRun = normalizeRunRecord(record);
+		state.lastRun = normalizeOrchestratorRunRecord(record);
 	}
 	await writeOrchestratorRuntimeState(state);
 }
@@ -152,7 +191,7 @@ export async function upsertActiveRun(record: OrchestratorRunRecord): Promise<vo
 export async function finalizeRun(record: OrchestratorRunRecord, markdown?: string): Promise<void> {
 	const state = await readOrchestratorRuntimeState();
 	state.activeRun = undefined;
-	state.lastRun = normalizeRunRecord(record);
+	state.lastRun = normalizeOrchestratorRunRecord(record);
 	await writeOrchestratorRuntimeState(state);
 	await fs.mkdir(getOrchestratorRunsDir(), { recursive: true });
 	await writeJsonAtomic(getOrchestratorRunJsonPath(record.runId), record);
@@ -161,23 +200,25 @@ export async function finalizeRun(record: OrchestratorRunRecord, markdown?: stri
 	}
 }
 
+function shortenWidgetText(value: string, maxLength = 52): string {
+	const trimmed = value.trim();
+	if (!trimmed) return "";
+	return trimmed.length > maxLength ? `${trimmed.slice(0, Math.max(0, maxLength - 3))}...` : trimmed;
+}
+
 export function buildOrchestratorWidgetLines(record: OrchestratorRunRecord): string[] {
-	const lines = [
-		"Orchestrator",
-		`- ${record.taskSummary || record.task || record.runId}`,
-		`- Phase: ${record.phase}`,
-	];
-	if (record.workerCount > 0) {
-		lines.push(`- Workers: ${record.workerCount}`);
-	}
-	if (record.workerModels.length > 0) {
-		lines.push(`- Models: ${record.workerModels.join(", ")}`);
-	}
+	const latestEvent = record.timeline.at(-1);
+	const step = record.currentStep || latestEvent?.label || record.reviewerSummary || record.plannerSummary;
+	const lines = ["Orchestrator", `Task: ${shortenWidgetText(record.taskSummary || record.task || record.runId)}`];
+	if (step) lines.push(`Step: ${shortenWidgetText(step)}`);
+	lines.push(`Phase: ${record.phase}`);
+	if (record.workerCount > 0) lines.push(`Workers: ${record.workerCount} active`);
 	if (record.reviewCycle > 0) {
-		lines.push(`- Review cycle: ${record.reviewCycle}/${record.reviewRetryCap}`);
-	}
-	if (record.missionId) {
-		lines.push(`- Mission: ${record.missionId}`);
+		lines.push(`Review: ${record.reviewCycle}/${record.reviewRetryCap}`);
+	} else if (record.missionId) {
+		lines.push(`Mission: ${shortenWidgetText(record.missionId, 40)}`);
+	} else if (latestEvent?.detail) {
+		lines.push(`Latest: ${shortenWidgetText(latestEvent.detail)}`);
 	}
 	return lines.slice(0, 6);
 }

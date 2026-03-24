@@ -11,6 +11,7 @@ import {
 	getOrchestratorRunMarkdownPath,
 	readOrchestratorRuntimeState,
 	type OrchestratorRunRecord,
+	type OrchestratorTimelineEvent,
 	type OrchestratorRunVerdict,
 	upsertActiveRun,
 } from "./orchestrator-runtime.ts";
@@ -121,6 +122,30 @@ export type OrchestratorExecutionDetails = {
 	missionMode?: MissionLaunchMode;
 };
 
+export type OrchestratorMessageContent = {
+	kind: "result" | "status" | "inspect";
+	title: string;
+	state: string;
+	runId?: string;
+	taskSummary: string;
+	phase?: string;
+	currentStep?: string;
+	summary?: string;
+	workerCount: number;
+	workerModels: string[];
+	reviewCycle: number;
+	reviewRetryCap: number;
+	blockingFindings: string[];
+	missionId?: string;
+	missionMode?: MissionLaunchMode;
+	missionReason?: string;
+	errorText?: string;
+	timeline: OrchestratorTimelineEvent[];
+	inspectHint?: string;
+	lastRunId?: string;
+	lastVerdict?: string;
+};
+
 function formatRoleOverride(profile: RoleProfile): string {
 	return `${profile.provider}/${profile.modelId}`;
 }
@@ -163,6 +188,139 @@ function truncateText(value: string, maxLength = 96): string {
 
 function normalizeMissionMode(value: unknown): MissionLaunchMode | undefined {
 	return value === "lightweight" || value === "full" ? value : undefined;
+}
+
+function humanizeToolName(rawTool: string): string {
+	const normalized = rawTool.split("__").pop() || rawTool;
+	return normalized
+		.replace(/^tool:/, "")
+		.replace(/[-_]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+export function describeDelegationProgress(role: "planner" | "workers" | "reviewer", status: string): string {
+	const subject = role === "planner" ? "Planner" : role === "reviewer" ? "Reviewer" : "Workers";
+	if (status === "running") return `${subject} running`;
+	if (status.startsWith("tool:")) {
+		return `${subject} using ${humanizeToolName(status.slice("tool:".length))}`;
+	}
+	return `${subject} ${status.trim()}`;
+}
+
+function appendTimelineEvent(
+	record: OrchestratorRunRecord,
+	event?: {
+		kind?: OrchestratorTimelineEvent["kind"];
+		label?: string;
+		detail?: string;
+		phase?: string;
+	},
+): OrchestratorTimelineEvent[] {
+	if (!event?.label?.trim()) return record.timeline;
+	return [
+		...record.timeline,
+		{
+			kind: event.kind ?? "progress",
+			label: event.label.trim(),
+			detail: event.detail?.trim() || undefined,
+			at: Date.now(),
+			phase: event.phase?.trim() || record.phase,
+		},
+	].slice(-24);
+}
+
+function summarizeRecord(record: OrchestratorRunRecord): string {
+	return record.reviewerSummary || record.plannerSummary || record.taskSummary || record.task || record.runId;
+}
+
+function getRecordState(record: OrchestratorRunRecord): string {
+	return record.status === "completed" ? (record.verdict ?? "completed") : record.status;
+}
+
+export function buildOrchestratorMessageContent(
+	kind: OrchestratorMessageContent["kind"],
+	record: OrchestratorRunRecord,
+	extra: Partial<Pick<OrchestratorMessageContent, "lastRunId" | "lastVerdict">> = {},
+): OrchestratorMessageContent {
+	return {
+		kind,
+		title: kind === "result" ? "Orchestrator Result" : kind === "inspect" ? "Orchestrator Inspect" : "Orchestrator Status",
+		state: getRecordState(record),
+		runId: record.runId,
+		taskSummary: record.taskSummary || record.task || record.runId,
+		phase: record.phase,
+		currentStep: record.currentStep || record.timeline.at(-1)?.label,
+		summary: summarizeRecord(record),
+		workerCount: record.workerCount,
+		workerModels: record.workerModels ?? [],
+		reviewCycle: record.reviewCycle,
+		reviewRetryCap: record.reviewRetryCap,
+		blockingFindings: record.blockingFindings ?? [],
+		missionId: record.missionId,
+		missionMode: record.missionMode,
+		missionReason: record.missionReason,
+		errorText: record.errorText,
+		timeline: [...(record.timeline ?? [])],
+		inspectHint: `/orchestrate inspect ${record.runId}`,
+		...extra,
+	};
+}
+
+function buildIdleStatusMessageContent(state: Awaited<ReturnType<typeof readOrchestratorRuntimeState>>): OrchestratorMessageContent {
+	return {
+		kind: "status",
+		title: "Orchestrator Status",
+		state: "idle",
+		taskSummary: "No orchestrator run yet.",
+		workerCount: 0,
+		workerModels: [],
+		reviewCycle: 0,
+		reviewRetryCap: 1,
+		blockingFindings: [],
+		timeline: [],
+		lastRunId: state.lastRun?.runId,
+		lastVerdict: state.lastRun ? getRecordState(state.lastRun) : "none",
+		inspectHint: state.lastRun ? `/orchestrate inspect ${state.lastRun.runId}` : undefined,
+	};
+}
+
+function formatTimelineEvent(event: OrchestratorTimelineEvent): string {
+	if (event.detail) return `- ${event.label}: ${event.detail}`;
+	return `- ${event.label}`;
+}
+
+export function renderOrchestratorMessageText(content: OrchestratorMessageContent | string): string {
+	if (typeof content === "string") return content.trim();
+	const lines = [
+		`# ${content.title}`,
+		"",
+		`State: ${content.state}`,
+	];
+	if (content.runId) lines.push(`Run: ${content.runId}`);
+	lines.push(`Task: ${content.taskSummary}`);
+	if (content.phase) lines.push(`Phase: ${content.phase}`);
+	if (content.currentStep) lines.push(`Step: ${content.currentStep}`);
+	if (content.summary && content.summary !== content.taskSummary) lines.push(`Summary: ${content.summary}`);
+	if (content.workerCount > 0) lines.push(`Workers: ${content.workerCount}`);
+	if (content.workerModels.length > 0) lines.push(`Worker models: ${formatWorkerModelList(content.workerModels)}`);
+	if (content.reviewCycle > 0) lines.push(`Review: ${content.reviewCycle}/${content.reviewRetryCap}`);
+	if (content.missionId) lines.push(`Mission: ${content.missionId}`);
+	if (content.missionMode) lines.push(`Mission mode: ${content.missionMode}`);
+	if (content.missionReason) lines.push(`Mission reason: ${content.missionReason}`);
+	if (content.lastRunId) lines.push(`Last run: ${content.lastRunId}`);
+	if (content.lastVerdict) lines.push(`Last verdict: ${content.lastVerdict}`);
+	if (content.blockingFindings.length > 0) {
+		lines.push("", "Blocking findings:");
+		for (const finding of content.blockingFindings) lines.push(`- ${finding}`);
+	}
+	if (content.timeline.length > 0) {
+		lines.push("", "Timeline:");
+		for (const event of content.timeline) lines.push(formatTimelineEvent(event));
+	}
+	if (content.errorText) lines.push("", `Error: ${content.errorText}`);
+	if (content.inspectHint) lines.push("", `Inspect: ${content.inspectHint}`);
+	return lines.join("\n");
 }
 
 export function extractJsonObject(text: string): unknown | null {
@@ -422,110 +580,44 @@ function buildMissionLaunchRequest(
 	};
 }
 
-function buildCompactResultText(record: OrchestratorRunRecord): string {
-	const lines = [
-		"# Orchestrator Result",
-		"",
-		`Verdict: ${record.verdict ?? record.status}`,
-		`Run: ${record.runId}`,
-		`Summary: ${record.reviewerSummary || record.plannerSummary || record.taskSummary}`,
-	];
-	if (record.workerCount > 0) {
-		lines.push(`Workers: ${record.workerCount}`);
-	}
-	if (record.workerModels?.length) {
-		lines.push(`Worker models: ${formatWorkerModelList(record.workerModels)}`);
-	}
-	if (record.reviewCycle > 0) {
-		lines.push(`Review cycles: ${record.reviewCycle}/${record.reviewRetryCap}`);
-	}
-	if (record.blockingFindings.length > 0) {
-		lines.push("", "Key reviewer findings:");
-		for (const finding of record.blockingFindings.slice(0, 4)) {
-			lines.push(`- ${finding}`);
-		}
-	}
-	if (record.status === "escalated") {
-		lines.push("", `Mission: ${record.missionId || "(pending response)"}`);
-		if (record.missionMode) lines.push(`Mission mode: ${record.missionMode}`);
-		if (record.missionReason) lines.push(`Escalation reason: ${record.missionReason}`);
-	}
-	lines.push("", `Inspect: /orchestrate inspect ${record.runId}`);
+function buildRunReportText(record: OrchestratorRunRecord): string {
+	const content = buildOrchestratorMessageContent("inspect", record);
+	const lines = renderOrchestratorMessageText(content).split("\n");
+	lines.push(`Started: ${new Date(record.startedAt).toISOString()}`);
+	lines.push(`Updated: ${new Date(record.updatedAt).toISOString()}`);
 	return lines.join("\n");
 }
 
-function buildRunMarkdown(record: OrchestratorRunRecord): string {
-	const lines = [
-		"# Orchestrator Run",
-		"",
-		`- Run: ${record.runId}`,
-		`- Status: ${record.status}`,
-		`- Verdict: ${record.verdict ?? record.status}`,
-		`- Phase: ${record.phase}`,
-		`- Workers: ${record.workerCount}`,
-		`- Worker models: ${formatWorkerModelList(record.workerModels ?? [])}`,
-		`- Review cycle: ${record.reviewCycle}/${record.reviewRetryCap}`,
-		`- Started: ${new Date(record.startedAt).toISOString()}`,
-		`- Updated: ${new Date(record.updatedAt).toISOString()}`,
-	];
-	if (record.missionId) lines.push(`- Mission: ${record.missionId}`);
-	if (record.missionMode) lines.push(`- Mission mode: ${record.missionMode}`);
-	if (record.missionReason) lines.push(`- Mission reason: ${record.missionReason}`);
-	lines.push("", "## Task", record.task.trim() || "(missing task)");
-	lines.push("", "## Task Summary", record.taskSummary || "(missing summary)");
-	if (record.plannerSummary) lines.push("", "## Planner Summary", record.plannerSummary);
-	if (record.reviewerSummary) lines.push("", "## Reviewer Summary", record.reviewerSummary);
-	if (record.blockingFindings.length > 0) {
-		lines.push("", "## Blocking Findings");
-		for (const finding of record.blockingFindings) lines.push(`- ${finding}`);
-	}
-	if (record.errorText) lines.push("", "## Error", record.errorText);
-	return lines.join("\n");
-}
-
-function buildStatusText(state: Awaited<ReturnType<typeof readOrchestratorRuntimeState>>): string {
+function buildStatusMessageContent(
+	state: Awaited<ReturnType<typeof readOrchestratorRuntimeState>>,
+): OrchestratorMessageContent {
 	const active = state.activeRun;
 	const latest = active ?? state.lastRun;
-	if (!latest) {
-		return [
-			"# Orchestrator Status",
-			"",
-			"State: idle",
-			"Last run: none",
-		].join("\n");
-	}
-
-	const lines = [
-		"# Orchestrator Status",
-		"",
-		`State: ${active ? "running" : "idle"}`,
-	];
-	if (active) {
-		lines.push(`Active run: ${active.runId}`);
-		lines.push(`Task: ${active.taskSummary}`);
-		lines.push(`Phase: ${active.phase}`);
-		if (active.workerCount > 0) lines.push(`Workers: ${active.workerCount}`);
-		if (active.workerModels?.length) lines.push(`Worker models: ${formatWorkerModelList(active.workerModels)}`);
-		if (active.reviewCycle > 0) lines.push(`Review cycle: ${active.reviewCycle}/${active.reviewRetryCap}`);
-		if (active.missionId) lines.push(`Mission: ${active.missionId}`);
-	}
-	lines.push(`Last run: ${state.lastRun?.runId ?? latest.runId}`);
-	lines.push(`Last verdict: ${state.lastRun?.verdict ?? latest.verdict ?? latest.status}`);
-	lines.push(`Inspect: /orchestrate inspect ${state.lastRun?.runId ?? latest.runId}`);
-	return lines.join("\n");
+	if (!latest) return buildIdleStatusMessageContent(state);
+	return buildOrchestratorMessageContent("status", latest, {
+		lastRunId: state.lastRun?.runId ?? latest.runId,
+		lastVerdict: state.lastRun ? getRecordState(state.lastRun) : getRecordState(latest),
+	});
 }
 
-async function readRunInspectText(target: string): Promise<string> {
+async function readRunInspectContent(target: string): Promise<OrchestratorMessageContent | string> {
 	const state = await readOrchestratorRuntimeState();
 	const resolvedId = target === "latest"
 		? state.activeRun?.runId ?? state.lastRun?.runId
 		: target.trim();
 	if (!resolvedId) {
-		return [
-			"# Orchestrator Inspect",
-			"",
-			"No orchestrator run is available yet.",
-		].join("\n");
+		return {
+			kind: "inspect",
+			title: "Orchestrator Inspect",
+			state: "idle",
+			taskSummary: "No orchestrator run is available yet.",
+			workerCount: 0,
+			workerModels: [],
+			reviewCycle: 0,
+			reviewRetryCap: 1,
+			blockingFindings: [],
+			timeline: [],
+		};
 	}
 
 	try {
@@ -538,7 +630,7 @@ async function readRunInspectText(target: string): Promise<string> {
 	try {
 		const raw = await fs.readFile(getOrchestratorRunJsonPath(resolvedId), "utf8");
 		const record = JSON.parse(raw) as OrchestratorRunRecord;
-		return buildRunMarkdown(record);
+		return buildOrchestratorMessageContent("inspect", record);
 	} catch {
 		return [
 			"# Orchestrator Inspect",
@@ -648,7 +740,12 @@ async function requestMissionLaunch(
 	});
 }
 
-function renderOrchestratorMessage(pi: ExtensionAPI, ctx: ExtensionContext, text: string): void {
+function renderOrchestratorMessage(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	content: OrchestratorMessageContent | string,
+): void {
+	const text = renderOrchestratorMessageText(content);
 	if (!ctx.hasUI) {
 		process.stdout.write(`${text.trim()}\n`);
 		return;
@@ -657,6 +754,7 @@ function renderOrchestratorMessage(pi: ExtensionAPI, ctx: ExtensionContext, text
 		customType: ORCHESTRATOR_MESSAGE_TYPE,
 		content: text,
 		display: true,
+		details: typeof content === "string" ? undefined : content,
 	});
 }
 
@@ -673,9 +771,13 @@ function setOrchestratorWidget(ctx: ExtensionContext, record?: OrchestratorRunRe
 	}));
 }
 
-function buildExecutionResult(record: OrchestratorRunRecord): { text: string; details: OrchestratorExecutionDetails } {
+function buildExecutionResult(
+	record: OrchestratorRunRecord,
+): { content: OrchestratorMessageContent; text: string; details: OrchestratorExecutionDetails } {
+	const content = buildOrchestratorMessageContent("result", record);
 	return {
-		text: buildCompactResultText(record),
+		content,
+		text: renderOrchestratorMessageText(content),
 		details: {
 			runId: record.runId,
 			approved: record.verdict === "approved",
@@ -698,6 +800,7 @@ async function runOrchestrator(
 	signal: AbortSignal,
 	onPhase?: (phase: string, record: OrchestratorRunRecord) => void | Promise<void>,
 ): Promise<{
+	content: OrchestratorMessageContent;
 	text: string;
 	details: OrchestratorExecutionDetails;
 }> {
@@ -711,6 +814,7 @@ async function runOrchestrator(
 		taskSummary: truncateText(task, 96) || "Untitled orchestrator task",
 		blockingFindings: [],
 		phase: "starting",
+		currentStep: "Preparing orchestrator run",
 		status: "running",
 		workerCount: 0,
 		workerModels: [],
@@ -719,13 +823,27 @@ async function runOrchestrator(
 		missionHint: false,
 		startedAt: Date.now(),
 		updatedAt: Date.now(),
+		timeline: [],
 	};
 
-	const pushState = async (phase: string, patch: Partial<OrchestratorRunRecord> = {}) => {
+	const pushState = async (
+		phase: string,
+		patch: Partial<OrchestratorRunRecord> = {},
+		event?: { kind?: OrchestratorTimelineEvent["kind"]; label?: string; detail?: string },
+	) => {
 		activeRecord = {
 			...activeRecord,
 			...patch,
 			phase,
+			currentStep: patch.currentStep ?? event?.label ?? activeRecord.currentStep,
+			timeline: appendTimelineEvent(
+				{
+					...activeRecord,
+					...patch,
+					phase,
+				},
+				event ? { ...event, phase } : undefined,
+			),
 			updatedAt: Date.now(),
 		};
 		await upsertActiveRun(activeRecord);
@@ -733,8 +851,13 @@ async function runOrchestrator(
 		await onPhase?.(phase, activeRecord);
 	};
 
+	const updateProgress = async (phase: string, step: string) => {
+		if (!step.trim() || (activeRecord.phase === phase && activeRecord.currentStep === step.trim())) return;
+		await pushState(phase, { currentStep: step.trim() });
+	};
+
 	try {
-		await pushState("planning");
+		await pushState("planning", { currentStep: "Planner preparing the run" }, { kind: "phase", label: "Planner preparing the run" });
 		const plannerResponse = await requestDelegation(
 			pi,
 			{
@@ -746,6 +869,7 @@ async function runOrchestrator(
 				cwd,
 			},
 			signal,
+			(status) => updateProgress("planning", describeDelegationProgress("planner", status)),
 		);
 		if (plannerResponse.isError) {
 			throw new Error(plannerResponse.errorText || "Planner leg failed.");
@@ -765,6 +889,11 @@ async function runOrchestrator(
 			missionHint: plan.missionHint,
 			missionMode,
 			missionReason: plan.missionReason,
+			currentStep: "Planner finished the execution plan",
+		}, {
+			kind: "phase",
+			label: "Planner finished the execution plan",
+			detail: truncateText(plan.summary, 120),
 		});
 
 		const shouldEscalate =
@@ -774,6 +903,11 @@ async function runOrchestrator(
 				missionHint: true,
 				missionMode,
 				missionReason: plan.missionReason,
+				currentStep: "Escalating the task into Mission Control",
+			}, {
+				kind: "mission",
+				label: "Escalating the task into Mission Control",
+				detail: plan.missionReason,
 			});
 			const response = await requestMissionLaunch(pi, buildMissionLaunchRequest(ctx, task, plan, missionMode), signal);
 			if (!response.ok || !response.missionId) {
@@ -786,9 +920,16 @@ async function runOrchestrator(
 				verdict: "escalated",
 				missionId: response.missionId,
 				missionMode: response.mode ?? missionMode,
+				currentStep: "Mission Control accepted the escalation",
+				timeline: appendTimelineEvent(activeRecord, {
+					kind: "mission",
+					label: "Mission Control accepted the escalation",
+					detail: response.missionId,
+					phase: "mission-escalation",
+				}),
 				updatedAt: Date.now(),
 			};
-			await finalizeRun(activeRecord, buildRunMarkdown(activeRecord));
+			await finalizeRun(activeRecord, buildRunReportText(activeRecord));
 			setOrchestratorWidget(ctx, undefined);
 			return buildExecutionResult(activeRecord);
 		}
@@ -807,6 +948,11 @@ async function runOrchestrator(
 				reviewCycle: cycle,
 				workerCount: activeWorkerTasks.length,
 				workerModels: activeWorkerModels,
+				currentStep: activeWorkerTasks.length > 1 ? `${activeWorkerTasks.length} workers active` : "Worker running",
+			}, {
+				kind: "phase",
+				label: activeWorkerTasks.length > 1 ? `${activeWorkerTasks.length} workers active` : "Worker running",
+				detail: truncateText(activeWorkerTasks.join(" | "), 120),
 			});
 
 			const workerRequestTasks = workerAssignments.map((assignment) => ({
@@ -827,6 +973,7 @@ async function runOrchestrator(
 					cwd,
 				},
 				signal,
+				(status) => updateProgress("workers", describeDelegationProgress("workers", status)),
 			);
 
 			latestRuns = (workerResponse.parallelResults ?? []).map((result, index) => ({
@@ -852,6 +999,11 @@ async function runOrchestrator(
 				workerCount: latestRuns.length,
 				workerModels: uniqueWorkerModels(latestRuns.map((run) => run.model)),
 				reviewCycle: cycle,
+				currentStep: "Reviewer checking results",
+			}, {
+				kind: "phase",
+				label: "Reviewer checking results",
+				detail: `${latestRuns.length} worker result${latestRuns.length === 1 ? "" : "s"} ready`,
 			});
 
 			const reviewerResponse = await requestDelegation(
@@ -861,11 +1013,12 @@ async function runOrchestrator(
 					agent: "reviewer",
 					task: buildReviewerTask(task, plan, latestRuns, cycle, config.maxWorkers),
 					context: contextMode,
-					model: formatRoleOverride(config.roles.reviewer),
-					cwd,
-				},
-				signal,
-			);
+				model: formatRoleOverride(config.roles.reviewer),
+				cwd,
+			},
+			signal,
+			(status) => updateProgress("review", describeDelegationProgress("reviewer", status)),
+		);
 			if (reviewerResponse.isError) {
 				throw new Error(reviewerResponse.errorText || "Reviewer leg failed.");
 			}
@@ -882,6 +1035,11 @@ async function runOrchestrator(
 				reviewCycle: cycle,
 				workerCount: latestRuns.length,
 				workerModels: uniqueWorkerModels(latestRuns.map((run) => run.model)),
+				currentStep: latestReview.verdict === "approved" ? "Reviewer approved the run" : "Reviewer requested fixes",
+			}, {
+				kind: "verdict",
+				label: latestReview.verdict === "approved" ? "Reviewer approved the run" : "Reviewer requested fixes",
+				detail: truncateText(latestReview.summary, 120),
 			});
 
 			if (latestReview.verdict === "approved") break;
@@ -895,6 +1053,11 @@ async function runOrchestrator(
 			await pushState("repair-loop", {
 				blockingFindings: latestReview.blockingFindings,
 				reviewerSummary: latestReview.summary,
+				currentStep: "Repair loop requested",
+			}, {
+				kind: "phase",
+				label: "Repair loop requested",
+				detail: truncateText(latestReview.blockingFindings.join(" | "), 120),
 			});
 		}
 
@@ -908,9 +1071,16 @@ async function runOrchestrator(
 			workerCount: latestRuns.length,
 			workerModels: uniqueWorkerModels(latestRuns.map((run) => run.model)),
 			phase: "completed",
+			currentStep: latestReview.verdict === "approved" ? "Reviewer approved the run" : "Reviewer stopped with findings",
+			timeline: appendTimelineEvent(activeRecord, {
+				kind: latestReview.verdict === "approved" ? "verdict" : "error",
+				label: latestReview.verdict === "approved" ? "Run completed" : "Run completed with findings",
+				detail: truncateText(latestReview.summary, 120),
+				phase: "completed",
+			}),
 			updatedAt: Date.now(),
 		};
-		await finalizeRun(activeRecord, buildRunMarkdown(activeRecord));
+		await finalizeRun(activeRecord, buildRunReportText(activeRecord));
 		setOrchestratorWidget(ctx, undefined);
 		return buildExecutionResult(activeRecord);
 	} catch (error) {
@@ -920,10 +1090,17 @@ async function runOrchestrator(
 			status: "failed",
 			verdict: "failed",
 			phase: "failed",
+			currentStep: "Orchestrator run failed",
 			errorText: message,
+			timeline: appendTimelineEvent(activeRecord, {
+				kind: "error",
+				label: "Orchestrator run failed",
+				detail: message,
+				phase: "failed",
+			}),
 			updatedAt: Date.now(),
 		};
-		await finalizeRun(activeRecord, buildRunMarkdown(activeRecord));
+		await finalizeRun(activeRecord, buildRunReportText(activeRecord));
 		setOrchestratorWidget(ctx, undefined);
 		throw error;
 	}
@@ -938,7 +1115,7 @@ export async function runInteractiveOrchestratorTask(
 		timeoutMs?: number;
 		clearEditor?: boolean;
 	} = {},
-): Promise<{ text: string; details: OrchestratorExecutionDetails }> {
+): Promise<{ content: OrchestratorMessageContent; text: string; details: OrchestratorExecutionDetails }> {
 	const trimmed = task.trim();
 	if (!trimmed) throw new Error("Task is required.");
 	if (!ctx.hasUI) throw new Error("Orchestrate currently requires an interactive Pi session.");
@@ -947,7 +1124,6 @@ export async function runInteractiveOrchestratorTask(
 		ctx.ui.setEditorText("");
 	}
 
-	ctx.ui.notify("Running orchestrator...", "info");
 	const result = await runOrchestrator(
 		pi,
 		ctx,
@@ -955,20 +1131,24 @@ export async function runInteractiveOrchestratorTask(
 		options.contextMode ?? "fork",
 		AbortSignal.timeout(options.timeoutMs ?? (10 * 60 * 1000)),
 	);
-	renderOrchestratorMessage(pi, ctx, result.text);
-	ctx.ui.notify(
-		result.details.verdict === "approved"
-			? "Orchestrator run approved by reviewer."
-			: result.details.verdict === "escalated"
+	renderOrchestratorMessage(pi, ctx, result.content);
+	if (result.details.verdict !== "approved") {
+		ctx.ui.notify(
+			result.details.verdict === "escalated"
 				? "Orchestrator escalated the task into Mission Control."
 				: "Orchestrator stopped with reviewer findings.",
-		result.details.verdict === "approved" ? "info" : "warning",
-	);
+			"warning",
+		);
+	}
 	return result;
 }
 
-function writeCommandOutput(ctx: ExtensionContext, pi: ExtensionAPI, text: string): void {
-	renderOrchestratorMessage(pi, ctx, text);
+function writeCommandOutput(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	content: OrchestratorMessageContent | string,
+): void {
+	renderOrchestratorMessage(pi, ctx, content);
 }
 
 export default function registerOrchestratorController(pi: ExtensionAPI): void {
@@ -979,10 +1159,15 @@ export default function registerOrchestratorController(pi: ExtensionAPI): void {
 		})),
 	});
 
-	pi.registerMessageRenderer(ORCHESTRATOR_MESSAGE_TYPE, (message, _options, theme) => {
-		const title = theme.fg("accent", theme.bold("Orchestrator"));
-		const body = typeof message.content === "string" ? message.content : JSON.stringify(message.content, null, 2);
-		return new Text(`${title}\n\n${body}`, 0, 0);
+	pi.registerMessageRenderer(ORCHESTRATOR_MESSAGE_TYPE, (message, _options, _theme) => {
+		const payload =
+			message.details && typeof message.details === "object"
+				? (message.details as OrchestratorMessageContent)
+				: undefined;
+		const body = renderOrchestratorMessageText(
+			payload ?? (typeof message.content === "string" ? message.content : String(message.content ?? "")),
+		);
+		return new Text(body, 0, 0);
 	});
 
 	pi.registerTool({
@@ -1050,12 +1235,12 @@ export default function registerOrchestratorController(pi: ExtensionAPI): void {
 
 			const [subcommand, ...rest] = trimmed.split(/\s+/);
 			if (subcommand === "status") {
-				writeCommandOutput(ctx, pi, buildStatusText(await readOrchestratorRuntimeState()));
+				writeCommandOutput(ctx, pi, buildStatusMessageContent(await readOrchestratorRuntimeState()));
 				return;
 			}
 
 			if (subcommand === "inspect") {
-				writeCommandOutput(ctx, pi, await readRunInspectText(rest.join(" ").trim() || "latest"));
+				writeCommandOutput(ctx, pi, await readRunInspectContent(rest.join(" ").trim() || "latest"));
 				return;
 			}
 

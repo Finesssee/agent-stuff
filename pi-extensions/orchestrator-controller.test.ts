@@ -2,14 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
 	assignWorkerProfiles,
+	buildOrchestratorMessageContent,
+	describeDelegationProgress,
 	extractJsonObject,
 	normalizeOrchestratorPlan,
 	normalizeOrchestratorReview,
 	ORCHESTRATOR_MESSAGE_TYPE,
+	renderOrchestratorMessageText,
 	shouldAutoRouteOrchestratorTask,
 } from "./orchestrator-controller.ts";
 import registerOrchestratorController from "./orchestrator-controller.ts";
 import { normalizeOrchestratorModeConfig, shouldApplyBehaviorModePrompt } from "./orchestrator-mode.ts";
+import type { OrchestratorRunRecord } from "./orchestrator-runtime.ts";
 
 test("extractJsonObject parses fenced JSON payloads", () => {
 	const parsed = extractJsonObject('```json\n{"summary":"ok","workerTasks":["one"]}\n```') as {
@@ -135,4 +139,83 @@ test("registerOrchestratorController registers a custom orchestrator renderer", 
 		registerCommand() {},
 	} as any);
 	assert.deepEqual(renderers, [ORCHESTRATOR_MESSAGE_TYPE]);
+});
+
+test("describeDelegationProgress turns raw delegation updates into readable progress", () => {
+	assert.equal(describeDelegationProgress("planner", "running"), "Planner running");
+	assert.equal(describeDelegationProgress("workers", "tool:edit_file"), "Workers using edit file");
+	assert.equal(describeDelegationProgress("reviewer", "tool:mcp__morph_mcp__edit_file"), "Reviewer using edit file");
+});
+
+test("buildOrchestratorMessageContent builds a timeline-first result payload", () => {
+	const record: OrchestratorRunRecord = {
+		version: 1,
+		runId: "orch_demo",
+		task: "Fix the orchestrator status output",
+		taskSummary: "Tighten the orchestrator status output",
+		plannerSummary: "Split runtime and rendering work",
+		reviewerSummary: "Approved after the status card matched the widget.",
+		blockingFindings: [],
+		phase: "completed",
+		currentStep: "Reviewer approved the run",
+		status: "completed",
+		verdict: "approved",
+		workerCount: 2,
+		workerModels: ["smart/composer-2-fast", "smart/gpt-5.4-mini"],
+		reviewCycle: 1,
+		reviewRetryCap: 2,
+		missionHint: false,
+		startedAt: 1,
+		updatedAt: 2,
+		timeline: [
+			{ kind: "phase", label: "Planner finished", at: 1, phase: "planned" },
+			{ kind: "phase", label: "Workers finished", at: 2, phase: "review" },
+			{ kind: "verdict", label: "Reviewer approved the run", at: 3, phase: "completed" },
+		],
+	};
+
+	const content = buildOrchestratorMessageContent("result", record);
+	assert.equal(content.kind, "result");
+	assert.equal(content.state, "approved");
+	assert.equal(content.currentStep, "Reviewer approved the run");
+	assert.deepEqual(
+		content.timeline.map((event) => event.label),
+		["Planner finished", "Workers finished", "Reviewer approved the run"],
+	);
+	assert.equal(content.inspectHint, "/orchestrate inspect orch_demo");
+});
+
+test("renderOrchestratorMessageText shows structured timeline and metadata", () => {
+	const record: OrchestratorRunRecord = {
+		version: 1,
+		runId: "orch_demo",
+		task: "Fix the orchestrator status output",
+		taskSummary: "Tighten the orchestrator status output",
+		plannerSummary: "Split runtime and rendering work",
+		reviewerSummary: "Approved after the status card matched the widget.",
+		blockingFindings: [],
+		phase: "completed",
+		currentStep: "Reviewer approved the run",
+		status: "completed",
+		verdict: "approved",
+		workerCount: 2,
+		workerModels: ["smart/composer-2-fast", "smart/gpt-5.4-mini"],
+		reviewCycle: 1,
+		reviewRetryCap: 2,
+		missionHint: false,
+		startedAt: 1,
+		updatedAt: 2,
+		timeline: [
+			{ kind: "phase", label: "Planner finished", at: 1, phase: "planned" },
+			{ kind: "phase", label: "Workers finished", at: 2, phase: "review" },
+			{ kind: "verdict", label: "Reviewer approved the run", at: 3, phase: "completed" },
+		],
+	};
+
+	const text = renderOrchestratorMessageText(buildOrchestratorMessageContent("result", record));
+	assert.match(text, /State: approved/);
+	assert.match(text, /Step: Reviewer approved the run/);
+	assert.match(text, /Timeline:/);
+	assert.match(text, /- Planner finished/);
+	assert.match(text, /Inspect: \/orchestrate inspect orch_demo/);
 });
