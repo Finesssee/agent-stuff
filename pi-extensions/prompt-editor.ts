@@ -459,6 +459,46 @@ function inferModeFromSelection(ctx: ExtensionContext, pi: ExtensionAPI, data: M
 	return candidates[0] ?? null;
 }
 
+function hasExplicitModelStartupOverride(argv: string[] = process.argv.slice(2)): boolean {
+	for (let index = 0; index < argv.length; index += 1) {
+		const arg = argv[index];
+		if (arg === "--model" || arg === "--provider") return true;
+		if (arg.startsWith("--model=") || arg.startsWith("--provider=")) return true;
+	}
+	return false;
+}
+
+async function syncModeFromStartupState(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	lastObservedModel = { provider: ctx.model?.provider, modelId: ctx.model?.id };
+	await ensureRuntime(pi, ctx);
+	customOverlay = null;
+
+	const behaviorState = await readBehaviorModeState();
+	const inferred = inferModeFromSelection(ctx, pi, runtime.data);
+	const explicitStartupModel = hasExplicitModelStartupOverride();
+
+	if (inferred) {
+		runtime.currentMode = inferred;
+		runtime.lastRealMode = inferred;
+		await saveBehaviorModeState(inferred);
+		applyEditor(pi, ctx);
+		return;
+	}
+
+	if (!explicitStartupModel && behaviorState.currentBehavior !== "normal" && runtime.data.modes[behaviorState.currentBehavior]) {
+		runtime.currentMode = behaviorState.currentBehavior;
+		runtime.lastRealMode = behaviorState.currentBehavior;
+		await applyMode(pi, ctx, behaviorState.currentBehavior);
+		applyEditor(pi, ctx);
+		return;
+	}
+
+	runtime.currentMode = CUSTOM_MODE_NAME;
+	runtime.lastRealMode = behaviorState.currentBehavior;
+	customOverlay = getCurrentSelectionSpec(pi, ctx);
+	applyEditor(pi, ctx);
+}
+
 type ModeRuntime = {
 	filePath: string;
 	fileMtimeMs: number | null;
@@ -1630,42 +1670,11 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		lastObservedModel = { provider: ctx.model?.provider, modelId: ctx.model?.id };
-		await ensureRuntime(pi, ctx);
-		customOverlay = null;
-
-		const inferred = inferModeFromSelection(ctx, pi, runtime.data);
-		if (inferred) {
-			runtime.currentMode = inferred;
-			runtime.lastRealMode = inferred;
-			await saveBehaviorModeState(inferred);
-		} else {
-			// No exact match → treat as overlay.
-			runtime.currentMode = CUSTOM_MODE_NAME;
-			runtime.lastRealMode = (await readBehaviorModeState()).currentBehavior;
-			customOverlay = getCurrentSelectionSpec(pi, ctx);
-		}
-
-		applyEditor(pi, ctx);
+		await syncModeFromStartupState(pi, ctx);
 	});
 
 	pi.on("session_switch", async (_event, ctx) => {
-		lastObservedModel = { provider: ctx.model?.provider, modelId: ctx.model?.id };
-		await ensureRuntime(pi, ctx);
-		customOverlay = null;
-
-		const inferred = inferModeFromSelection(ctx, pi, runtime.data);
-		if (inferred) {
-			runtime.currentMode = inferred;
-			runtime.lastRealMode = inferred;
-			await saveBehaviorModeState(inferred);
-		} else {
-			runtime.currentMode = CUSTOM_MODE_NAME;
-			runtime.lastRealMode = (await readBehaviorModeState()).currentBehavior;
-			customOverlay = getCurrentSelectionSpec(pi, ctx);
-		}
-
-		applyEditor(pi, ctx);
+		await syncModeFromStartupState(pi, ctx);
 	});
 
 
