@@ -11,6 +11,7 @@ All notable changes to agent-stuff are documented here.
 * Added interactive Orchestrator-mode auto-routing so non-trivial prompts in the real Pi UI now dispatch through the orchestrator controller by default instead of relying on the model to remember the tool manually.
 * Fixed live TUI Orchestrator auto-routing by hooking the custom editor submit path directly instead of relying on Pi's internal `onSubmit` rebinding order.
 * Expanded `orchestrator-controller` into a `/orchestrate` command family with `status` and `inspect`, durable run artifacts under `~/.pi/agent/orchestrator/`, compact final summaries, and mission escalation into Mission Control when work is mission-shaped.
+* Replaced the single Orchestrator worker role with a primary-plus-pool worker stack, so `composer-2-fast` remains the first worker while additional smart-routed models such as `composer-2`, `gpt-5.4-mini`, `gpt-5.3-codex-spark`, `kimi-k2.5`, `minimax-m2.5`, and `glm-5` can join the same parallel run.
 * Prevented nested subagents from inheriting `Plan` or `Orchestrator` behavior prompts, which avoids recursive controller re-entry during planner/worker/reviewer runs.
 * Fixed Orchestrator chat cards to use a dedicated custom message renderer in the TUI, which removes the stray `[undefined]` header artifact from result and status views.
 * Switched the orchestrator planning leg to a dedicated `orchestrator-planner` agent so the live controller receives machine-readable JSON plans instead of markdown `plan.md` artifacts.
