@@ -17,6 +17,7 @@
   "pi": {
     "extensions": [
       "./pi-extensions/answer.ts",
+      "./pi-extensions/behavior-modes.ts",
       "./pi-extensions/btw.ts",
       "./pi-extensions/context.ts",
       "./pi-extensions/control.ts",
