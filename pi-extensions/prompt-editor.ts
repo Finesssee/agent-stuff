@@ -1,9 +1,22 @@
 import type { ExtensionAPI, ExtensionContext, ModelSelectEvent, ThinkingLevel } from "@mariozechner/pi-coding-agent";
 import { CustomEditor, ModelSelectorComponent, SettingsManager } from "@mariozechner/pi-coding-agent";
+import { Key, matchesKey } from "@mariozechner/pi-tui";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
+import {
+	BUILTIN_MODE_RING,
+	getDisplayedModeLabel,
+	isBuiltinBehaviorMode,
+	readOrchestratorModeConfig,
+	readBehaviorModeState,
+	saveBehaviorModeState,
+	saveOrchestratorModeConfig,
+	type BuiltinModeName,
+	type OrchestratorModeConfig,
+	type RoleProfile,
+} from "./orchestrator-mode.ts";
 
 // =============================================================================
 // Modes
@@ -28,9 +41,10 @@ type ModesFile = {
 	modes: Record<ModeName, ModeSpec>;
 };
 
-// Only "default" is a forced/built-in mode. Others are just initial suggestions and can be renamed/deleted.
-const DEFAULT_MODE_ORDER = ["default"] as const;
+// The top-level ring is fixed to these built-in behavioral modes. Saved presets stay secondary.
+const DEFAULT_MODE_ORDER = BUILTIN_MODE_RING;
 const CUSTOM_MODE_NAME = "custom" as const;
+const MODE_UI_PRESETS = "Saved presets…";
 
 function expandUserPath(p: string): string {
 	if (p === "~") return os.homedir();
@@ -272,17 +286,31 @@ function createDefaultModes(ctx: ExtensionContext, pi: ExtensionAPI): ModesFile 
 
 	return {
 		version: 1,
-		currentMode: "default",
+		currentMode: "normal",
 		modes: {
-			// Forced default mode
-			default: { ...base },
-			// Convenience mode (user can delete/rename)
-			fast: { ...base, thinkingLevel: "off" },
+			normal: { ...base },
+			plan: {
+				provider: "smart",
+				modelId: "gpt-5.4",
+				thinkingLevel: "xhigh",
+			},
+			orchestrator: {
+				provider: "smart",
+				modelId: "opus-4-6",
+				thinkingLevel: "high",
+			},
 		},
 	};
 }
 
 function ensureDefaultModeEntries(file: ModesFile, ctx: ExtensionContext, pi: ExtensionAPI): void {
+	if (file.modes.default && !file.modes.normal) {
+		file.modes.normal = { ...file.modes.default };
+	}
+	if (file.currentMode === "default" || file.currentMode === "fast") {
+		file.currentMode = "normal";
+	}
+
 	for (const name of DEFAULT_MODE_ORDER) {
 		if (!file.modes[name]) {
 			const defaults = createDefaultModes(ctx, pi);
@@ -296,8 +324,9 @@ function ensureDefaultModeEntries(file: ModesFile, ctx: ExtensionContext, pi: Ex
 	}
 
 	if (!file.currentMode || !(file.currentMode in file.modes) || file.currentMode === CUSTOM_MODE_NAME) {
+		const firstBuiltin = DEFAULT_MODE_ORDER.find((name) => file.modes[name]);
 		const first = Object.keys(file.modes).find((k) => k !== CUSTOM_MODE_NAME);
-		file.currentMode = file.modes.default ? "default" : first || "default";
+		file.currentMode = firstBuiltin ?? first ?? "normal";
 	}
 }
 
@@ -305,7 +334,7 @@ async function loadModesFile(filePath: string, ctx: ExtensionContext, pi: Extens
 	try {
 		const raw = await fs.readFile(filePath, "utf8");
 		const parsed = JSON.parse(raw) as Record<string, unknown>;
-		const currentMode = typeof parsed.currentMode === "string" ? parsed.currentMode : "default";
+		const currentMode = typeof parsed.currentMode === "string" ? parsed.currentMode : "normal";
 		const modesRaw = parsed.modes && typeof parsed.modes === "object" ? (parsed.modes as Record<string, unknown>) : {};
 		const modes: Record<string, ModeSpec> = {};
 		for (const [k, v] of Object.entries(modesRaw)) {
@@ -328,10 +357,18 @@ async function saveModesFile(filePath: string, data: ModesFile): Promise<void> {
 }
 
 function orderedModeNames(modes: Record<string, ModeSpec>): string[] {
-	// Preserve insertion order from the JSON file.
-	// Object key iteration order is stable in modern JS runtimes.
-	// NOTE: "custom" is an overlay mode and must not be selectable/persisted.
-	return Object.keys(modes).filter((name) => name !== CUSTOM_MODE_NAME);
+	const names = Object.keys(modes).filter((name) => name !== CUSTOM_MODE_NAME);
+	const builtins = DEFAULT_MODE_ORDER.filter((name) => names.includes(name));
+	const presets = names.filter((name) => !isBuiltinBehaviorMode(name));
+	return [...builtins, ...presets];
+}
+
+function orderedBuiltInModeNames(modes: Record<string, ModeSpec>): BuiltinModeName[] {
+	return DEFAULT_MODE_ORDER.filter((name) => Boolean(modes[name]));
+}
+
+function orderedPresetModeNames(modes: Record<string, ModeSpec>): string[] {
+	return orderedModeNames(modes).filter((name) => !isBuiltinBehaviorMode(name));
 }
 
 function getModeBorderColor(ctx: ExtensionContext, pi: ExtensionAPI, mode: string): (text: string) => string {
@@ -357,6 +394,12 @@ function formatModeLabel(mode: string): string {
 	return mode;
 }
 
+function getActiveBehaviorMode(): BuiltinModeName {
+	if (isBuiltinBehaviorMode(runtime.currentMode)) return runtime.currentMode;
+	if (isBuiltinBehaviorMode(runtime.lastRealMode)) return runtime.lastRealMode;
+	return "normal";
+}
+
 async function resolveModesPath(cwd: string): Promise<string> {
 	const projectPath = getProjectModesPath(cwd);
 	if (await fileExists(projectPath)) return projectPath;
@@ -370,7 +413,7 @@ function inferModeFromSelection(ctx: ExtensionContext, pi: ExtensionAPI, data: M
 	if (!provider || !modelId) return null;
 
 	// Only consider persisted/real modes (exclude the overlay "custom").
-	const names = orderedModeNames(data.modes);
+	const names = orderedBuiltInModeNames(data.modes);
 
 	const supportsThinking = Boolean(ctx.model?.reasoning);
 
@@ -442,9 +485,9 @@ const runtime: ModeRuntime = {
 	filePath: "",
 	fileMtimeMs: null,
 	baseline: null,
-	data: { version: 1, currentMode: "default", modes: {} },
-	lastRealMode: "default",
-	currentMode: "default",
+	data: { version: 1, currentMode: "normal", modes: {} },
+	lastRealMode: "normal",
+	currentMode: "normal",
 	applying: false,
 };
 
@@ -472,7 +515,7 @@ async function ensureRuntime(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 		// Reset overlay when switching projects.
 		if (filePathChanged && runtime.currentMode !== CUSTOM_MODE_NAME) {
 			runtime.currentMode = runtime.data.currentMode;
-			runtime.lastRealMode = runtime.currentMode;
+			runtime.lastRealMode = isBuiltinBehaviorMode(runtime.currentMode) ? runtime.currentMode : "normal";
 		}
 	}
 
@@ -481,8 +524,8 @@ async function ensureRuntime(pi: ExtensionAPI, ctx: ExtensionContext): Promise<v
 		if (!runtime.currentMode || !(runtime.currentMode in runtime.data.modes)) {
 			runtime.currentMode = runtime.data.currentMode;
 		}
-		if (!runtime.lastRealMode || !(runtime.lastRealMode in runtime.data.modes)) {
-			runtime.lastRealMode = runtime.currentMode;
+		if (!runtime.lastRealMode || !isBuiltinBehaviorMode(runtime.lastRealMode) || !(runtime.lastRealMode in runtime.data.modes)) {
+			runtime.lastRealMode = orderedBuiltInModeNames(runtime.data.modes)[0] ?? "normal";
 		}
 	}
 }
@@ -562,7 +605,10 @@ async function applyMode(pi: ExtensionAPI, ctx: ExtensionContext, mode: string):
 	}
 
 	runtime.currentMode = mode;
-	runtime.lastRealMode = mode;
+	if (isBuiltinBehaviorMode(mode)) {
+		runtime.lastRealMode = mode;
+		await saveBehaviorModeState(mode);
+	}
 	customOverlay = null;
 
 	runtime.applying = true;
@@ -618,7 +664,7 @@ function isDefaultModeName(name: string): boolean {
 }
 
 function isReservedModeName(name: string): boolean {
-	return name === CUSTOM_MODE_NAME || name === MODE_UI_CONFIGURE || name === MODE_UI_ADD || name === MODE_UI_BACK;
+	return name === CUSTOM_MODE_NAME || name === MODE_UI_PRESETS || name === MODE_UI_CONFIGURE || name === MODE_UI_ADD || name === MODE_UI_BACK;
 }
 
 function normalizeModeNameInput(name: string | undefined): string {
@@ -666,9 +712,19 @@ async function selectModeUI(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
 
 	while (true) {
 		await ensureRuntime(pi, ctx);
-		const names = orderedModeNames(runtime.data.modes);
-		const choice = await ctx.ui.select(`Mode (current: ${runtime.currentMode})`, [...names, MODE_UI_CONFIGURE]);
+		const builtins = orderedBuiltInModeNames(runtime.data.modes);
+		const presets = orderedPresetModeNames(runtime.data.modes);
+		const currentLabel = getDisplayedModeLabel(runtime.currentMode, runtime.lastRealMode);
+		const options = [...builtins, ...(presets.length > 0 ? [MODE_UI_PRESETS] : []), MODE_UI_CONFIGURE];
+		const choice = await ctx.ui.select(`Mode (current: ${currentLabel})`, options);
 		if (!choice) return;
+
+		if (choice === MODE_UI_PRESETS) {
+			const preset = await ctx.ui.select("Saved presets", presets);
+			if (!preset) continue;
+			await handleModeChoiceUI(pi, ctx, preset);
+			return;
+		}
 
 		if (choice === MODE_UI_CONFIGURE) {
 			await configureModesUI(pi, ctx);
@@ -743,6 +799,7 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
 		const thinkingLabel = spec.thinkingLevel ?? THINKING_UNSET_LABEL;
 
 		const actions = ["Change name", "Change model", "Change thinking level"];
+		if (modeName === "orchestrator") actions.push("Edit orchestrator profile");
 		if (!isDefaultModeName(modeName)) actions.push("Delete mode");
 		actions.push(MODE_UI_BACK);
 
@@ -765,6 +822,9 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
 			spec.modelId = selected.modelId;
 			runtime.data.modes[modeName] = spec;
 			await persistRuntime(pi, ctx);
+			if (modeName === "orchestrator") {
+				await syncOrchestratorPrimaryRole(spec);
+			}
 			ctx.ui.notify(`Updated model for \"${modeName}\"`, "info");
 
 			if (runtime.currentMode === modeName) {
@@ -785,11 +845,19 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
 
 			runtime.data.modes[modeName] = spec;
 			await persistRuntime(pi, ctx);
+			if (modeName === "orchestrator") {
+				await syncOrchestratorPrimaryRole(spec);
+			}
 			ctx.ui.notify(`Updated thinking level for \"${modeName}\"`, "info");
 
 			if (runtime.currentMode === modeName) {
 				await applyMode(pi, ctx, modeName);
 			}
+			continue;
+		}
+
+		if (action === "Edit orchestrator profile") {
+			await editOrchestratorProfileUI(pi, ctx);
 			continue;
 		}
 
@@ -805,7 +873,7 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
 				customOverlay = getCurrentSelectionSpec(pi, ctx);
 			}
 			if (runtime.lastRealMode === modeName) {
-				runtime.lastRealMode = "default";
+				runtime.lastRealMode = "normal";
 			}
 			requestEditorRender?.();
 			ctx.ui.notify(`Deleted mode \"${modeName}\"`, "info");
@@ -901,14 +969,196 @@ async function pickThinkingLevelForModeUI(
 	return undefined;
 }
 
+function formatRoleProfile(profile: RoleProfile): string {
+	const base = `${profile.provider}/${profile.modelId}`;
+	return profile.thinkingLevel && profile.thinkingLevel !== "off" ? `${base}:${profile.thinkingLevel}` : base;
+}
+
+async function pickSmallIntegerUI(
+	ctx: ExtensionContext,
+	title: string,
+	options: number[],
+	current: number,
+): Promise<number | undefined> {
+	if (!ctx.hasUI) return undefined;
+	const labels = options.map((value) => (value === current ? `${value} (current)` : `${value}`));
+	const choice = await ctx.ui.select(title, labels);
+	if (!choice) return undefined;
+	const parsed = Number.parseInt(choice, 10);
+	return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+async function editRoleProfileUI(
+	ctx: ExtensionContext,
+	label: string,
+	profile: RoleProfile,
+): Promise<RoleProfile | undefined> {
+	if (!ctx.hasUI) return undefined;
+	const next: RoleProfile = { ...profile };
+
+	while (true) {
+		const action = await ctx.ui.select(`Edit ${label} role  ${formatRoleProfile(next)}`, [
+			"Change model",
+			"Change thinking level",
+			MODE_UI_BACK,
+		]);
+		if (!action || action === MODE_UI_BACK) return next;
+
+		if (action === "Change model") {
+			const selected = await pickModelForModeUI(ctx, {
+				provider: next.provider,
+				modelId: next.modelId,
+				thinkingLevel: next.thinkingLevel,
+			});
+			if (selected) {
+				next.provider = selected.provider;
+				next.modelId = selected.modelId;
+			}
+			continue;
+		}
+
+		if (action === "Change thinking level") {
+			const level = await pickThinkingLevelForModeUI(ctx, next.thinkingLevel);
+			if (level === undefined) continue;
+			if (level === null) delete next.thinkingLevel;
+			else next.thinkingLevel = level;
+		}
+	}
+}
+
+async function syncOrchestratorPrimaryRole(spec: ModeSpec): Promise<void> {
+	const config = await readOrchestratorModeConfig();
+	config.roles.orchestrator = {
+		provider: spec.provider ?? config.roles.orchestrator.provider,
+		modelId: spec.modelId ?? config.roles.orchestrator.modelId,
+		thinkingLevel: spec.thinkingLevel ?? config.roles.orchestrator.thinkingLevel,
+	};
+	await saveOrchestratorModeConfig(config);
+}
+
+async function persistOrchestratorConfig(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	config: OrchestratorModeConfig,
+): Promise<void> {
+	await saveOrchestratorModeConfig(config);
+	runtime.data.modes.orchestrator = {
+		...runtime.data.modes.orchestrator,
+		provider: config.roles.orchestrator.provider,
+		modelId: config.roles.orchestrator.modelId,
+		thinkingLevel: config.roles.orchestrator.thinkingLevel,
+	};
+	await persistRuntime(pi, ctx);
+	if (runtime.currentMode === "orchestrator") {
+		await applyMode(pi, ctx, "orchestrator");
+	}
+}
+
+async function editOrchestratorProfileUI(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) return;
+	let config = await readOrchestratorModeConfig();
+
+	while (true) {
+		const plannerLabel = `Planner role: ${formatRoleProfile(config.roles.planner)}`;
+		const orchestratorLabel = `Orchestrator role: ${formatRoleProfile(config.roles.orchestrator)}`;
+		const workerLabel = `Worker role: ${formatRoleProfile(config.roles.worker)}`;
+		const reviewerLabel = `Reviewer role: ${formatRoleProfile(config.roles.reviewer)}`;
+		const triggerLabel = `Trigger policy: ${config.triggerPolicy}`;
+		const missionLabel = `Mission boundary: ${config.missionBoundary}`;
+		const workerCapLabel = `Worker cap: ${config.maxWorkers}`;
+		const retryLabel = `Review retry cap: ${config.reviewRetryCap}`;
+
+		const action = await ctx.ui.select("Edit Orchestrator profile", [
+			plannerLabel,
+			orchestratorLabel,
+			workerLabel,
+			reviewerLabel,
+			triggerLabel,
+			missionLabel,
+			workerCapLabel,
+			retryLabel,
+			MODE_UI_BACK,
+		]);
+		if (!action || action === MODE_UI_BACK) return;
+
+		if (action === plannerLabel) {
+			const updated = await editRoleProfileUI(ctx, "planner", config.roles.planner);
+			if (!updated) continue;
+			config.roles.planner = updated;
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === orchestratorLabel) {
+			const updated = await editRoleProfileUI(ctx, "orchestrator", config.roles.orchestrator);
+			if (!updated) continue;
+			config.roles.orchestrator = updated;
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === workerLabel) {
+			const updated = await editRoleProfileUI(ctx, "worker", config.roles.worker);
+			if (!updated) continue;
+			config.roles.worker = updated;
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === reviewerLabel) {
+			const updated = await editRoleProfileUI(ctx, "reviewer", config.roles.reviewer);
+			if (!updated) continue;
+			config.roles.reviewer = updated;
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === triggerLabel) {
+			const trigger = await ctx.ui.select("Trigger policy", [
+				config.triggerPolicy === "non-trivial" ? "non-trivial (current)" : "non-trivial",
+				config.triggerPolicy === "always" ? "always (current)" : "always",
+			]);
+			if (!trigger) continue;
+			config.triggerPolicy = trigger.startsWith("always") ? "always" : "non-trivial";
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === missionLabel) {
+			const boundary = await ctx.ui.select("Mission boundary", [
+				config.missionBoundary === "inline-first" ? "inline-first (current)" : "inline-first",
+				config.missionBoundary === "mission-first" ? "mission-first (current)" : "mission-first",
+			]);
+			if (!boundary) continue;
+			config.missionBoundary = boundary.startsWith("mission-first") ? "mission-first" : "inline-first";
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === workerCapLabel) {
+			const next = await pickSmallIntegerUI(ctx, "Worker cap", [1, 2, 3], config.maxWorkers);
+			if (!next) continue;
+			config.maxWorkers = next;
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === retryLabel) {
+			const next = await pickSmallIntegerUI(ctx, "Review retry cap", [1, 2, 3], config.reviewRetryCap);
+			if (!next) continue;
+			config.reviewRetryCap = next;
+			await persistOrchestratorConfig(pi, ctx, config);
+		}
+	}
+}
+
 async function cycleMode(pi: ExtensionAPI, ctx: ExtensionContext, direction: 1 | -1 = 1): Promise<void> {
 	if (!ctx.hasUI) return;
 	await ensureRuntime(pi, ctx);
-	const names = orderedModeNames(runtime.data.modes);
+	const names = orderedBuiltInModeNames(runtime.data.modes);
 	if (names.length === 0) return;
 
-	// If we're currently in the overlay mode, cycle relative to the last real mode.
-	const baseMode = runtime.currentMode === CUSTOM_MODE_NAME ? runtime.lastRealMode : runtime.currentMode;
+	const baseMode = getActiveBehaviorMode();
 	const idx = Math.max(0, names.indexOf(baseMode));
 	const next = names[(idx + direction + names.length) % names.length] ?? names[0]!;
 	await applyMode(pi, ctx, next);
@@ -928,6 +1178,7 @@ interface PromptEntry {
 
 class PromptEditor extends CustomEditor {
 	public modeLabelProvider?: () => string;
+	public onCycleBehaviorMode?: () => void | Promise<void>;
 	/**
 	 * Color function for the mode label. If unset, the label inherits the border color.
 	 * We use this to keep the label consistent (e.g. same as the footer/status bar).
@@ -956,6 +1207,14 @@ class PromptEditor extends CustomEditor {
 
 	lockBorderColor() {
 		this.lockedBorder = true;
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, Key.shift("tab"))) {
+			void this.onCycleBehaviorMode?.();
+			return;
+		}
+		super.handleInput(data);
 	}
 
 	render(width: number): string[] {
@@ -1146,7 +1405,8 @@ function setEditor(pi: ExtensionAPI, ctx: ExtensionContext, history: PromptEntry
 	ctx.ui.setEditorComponent((tui, theme, keybindings) => {
 		const editor = new PromptEditor(tui, theme, keybindings);
 		requestEditorRender = () => editor.requestRenderNow();
-		editor.modeLabelProvider = () => runtime.currentMode;
+		editor.modeLabelProvider = () => getDisplayedModeLabel(runtime.currentMode, runtime.lastRealMode);
+		editor.onCycleBehaviorMode = () => cycleMode(pi, ctx, 1);
 		// Keep the mode label color stable (match footer/status bar).
 		editor.modeLabelColor = (text: string) => ctx.ui.theme.fg("dim", text);
 		const borderColor = (text: string) => {
@@ -1258,9 +1518,11 @@ export default function (pi: ExtensionAPI) {
 		if (inferred) {
 			runtime.currentMode = inferred;
 			runtime.lastRealMode = inferred;
+			await saveBehaviorModeState(inferred);
 		} else {
 			// No exact match → treat as overlay.
 			runtime.currentMode = CUSTOM_MODE_NAME;
+			runtime.lastRealMode = (await readBehaviorModeState()).currentBehavior;
 			customOverlay = getCurrentSelectionSpec(pi, ctx);
 		}
 
@@ -1276,8 +1538,10 @@ export default function (pi: ExtensionAPI) {
 		if (inferred) {
 			runtime.currentMode = inferred;
 			runtime.lastRealMode = inferred;
+			await saveBehaviorModeState(inferred);
 		} else {
 			runtime.currentMode = CUSTOM_MODE_NAME;
+			runtime.lastRealMode = (await readBehaviorModeState()).currentBehavior;
 			customOverlay = getCurrentSelectionSpec(pi, ctx);
 		}
 
@@ -1295,7 +1559,7 @@ export default function (pi: ExtensionAPI) {
 
 		// Manual model changes always go into the overlay "custom" mode.
 		await ensureRuntime(pi, ctx);
-		if (runtime.currentMode !== CUSTOM_MODE_NAME) {
+		if (runtime.currentMode !== CUSTOM_MODE_NAME && isBuiltinBehaviorMode(runtime.currentMode)) {
 			runtime.lastRealMode = runtime.currentMode;
 		}
 		runtime.currentMode = CUSTOM_MODE_NAME;
