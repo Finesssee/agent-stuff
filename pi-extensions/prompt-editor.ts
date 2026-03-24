@@ -396,6 +396,25 @@ function formatModeLabel(mode: string): string {
 	return mode;
 }
 
+export type SteeringComposeMode = "normal" | "qsteer" | "psteer";
+
+export function cycleSteeringComposeMode(mode: SteeringComposeMode): SteeringComposeMode {
+	if (mode === "normal") return "qsteer";
+	if (mode === "qsteer") return "psteer";
+	return "normal";
+}
+
+export function buildSteeringDraftCommand(mode: SteeringComposeMode, draft: string): string | undefined {
+	const trimmed = draft.trim();
+	if (!trimmed || mode === "normal") return undefined;
+	return `/${mode} ${trimmed}`;
+}
+
+export function formatPromptEditorLabel(mode: string, steeringMode: SteeringComposeMode): string {
+	if (steeringMode === "normal") return formatModeLabel(mode);
+	return `${formatModeLabel(mode)} · ${steeringMode}`;
+}
+
 function getActiveBehaviorMode(): BuiltinModeName {
 	if (isBuiltinBehaviorMode(runtime.currentMode)) return runtime.currentMode;
 	if (isBuiltinBehaviorMode(runtime.lastRealMode)) return runtime.lastRealMode;
@@ -1295,6 +1314,7 @@ class PromptEditor extends CustomEditor {
 	 * We use this to keep the label consistent (e.g. same as the footer/status bar).
 	 */
 	public modeLabelColor?: (text: string) => string;
+	private steeringComposeMode: SteeringComposeMode = "normal";
 	private lockedBorder = false;
 	private _borderColor?: (text: string) => string;
 
@@ -1320,9 +1340,27 @@ class PromptEditor extends CustomEditor {
 		this.lockedBorder = true;
 	}
 
+	getSteeringComposeMode(): SteeringComposeMode {
+		return this.steeringComposeMode;
+	}
+
+	setSteeringComposeMode(mode: SteeringComposeMode): void {
+		if (this.steeringComposeMode === mode) return;
+		this.steeringComposeMode = mode;
+		this.requestRenderNow();
+	}
+
+	cycleSteeringComposeMode(): void {
+		this.setSteeringComposeMode(cycleSteeringComposeMode(this.steeringComposeMode));
+	}
+
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.shift("tab"))) {
 			void this.onCycleBehaviorMode?.();
+			return;
+		}
+		if (matchesKey(data, Key.tab) || matchesKey(data, "tab")) {
+			this.cycleSteeringComposeMode();
 			return;
 		}
 		super.handleInput(data);
@@ -1512,19 +1550,35 @@ function historiesMatch(a: PromptEntry[], b: PromptEntry[]): boolean {
 	return true;
 }
 
-function installOrchestratorSubmitRouter(editor: PromptEditor, pi: ExtensionAPI, ctx: ExtensionContext): void {
+function installPromptSubmitRouter(editor: PromptEditor, pi: ExtensionAPI, ctx: ExtensionContext): void {
 	const marker = editor as PromptEditor & {
-		__orchestratorSubmitWrapped?: boolean;
+		__promptSubmitWrapped?: boolean;
 		submitValue?: (() => void) | undefined;
 	};
-	if (marker.__orchestratorSubmitWrapped) return;
-	marker.__orchestratorSubmitWrapped = true;
+	if (marker.__promptSubmitWrapped) return;
+	marker.__promptSubmitWrapped = true;
 
 	const originalSubmitValue = typeof marker.submitValue === "function" ? marker.submitValue.bind(editor) : undefined;
 	if (!originalSubmitValue) return;
 
 	marker.submitValue = () => {
-		const trimmed = editor.getExpandedText().trim();
+		const draft = editor.getExpandedText();
+		const steeringCommand = buildSteeringDraftCommand(editor.getSteeringComposeMode(), draft);
+
+		if (steeringCommand) {
+			const originalOnSubmit = editor.onSubmit;
+			editor.onSubmit = undefined;
+			editor.setText(steeringCommand);
+			try {
+				originalSubmitValue();
+			} finally {
+				editor.onSubmit = originalOnSubmit;
+				editor.setSteeringComposeMode("normal");
+			}
+			return;
+		}
+
+		const trimmed = draft.trim();
 
 		void (async () => {
 			const config = await readOrchestratorModeConfig();
@@ -1534,6 +1588,7 @@ function installOrchestratorSubmitRouter(editor: PromptEditor, pi: ExtensionAPI,
 				shouldAutoRouteOrchestratorTask(trimmed, config.triggerPolicy);
 
 			if (!shouldRoute) {
+				editor.setSteeringComposeMode("normal");
 				originalSubmitValue();
 				return;
 			}
@@ -1544,6 +1599,7 @@ function installOrchestratorSubmitRouter(editor: PromptEditor, pi: ExtensionAPI,
 				originalSubmitValue();
 			} finally {
 				editor.onSubmit = originalOnSubmit;
+				editor.setSteeringComposeMode("normal");
 			}
 
 			try {
@@ -1564,7 +1620,11 @@ function setEditor(pi: ExtensionAPI, ctx: ExtensionContext, history: PromptEntry
 	ctx.ui.setEditorComponent((tui, theme, keybindings) => {
 		const editor = new PromptEditor(tui, theme, keybindings);
 		requestEditorRender = () => editor.requestRenderNow();
-		editor.modeLabelProvider = () => getDisplayedModeLabel(runtime.currentMode, runtime.lastRealMode);
+		editor.modeLabelProvider = () =>
+			formatPromptEditorLabel(
+				getDisplayedModeLabel(runtime.currentMode, runtime.lastRealMode),
+				editor.getSteeringComposeMode(),
+			);
 		editor.onCycleBehaviorMode = () => cycleMode(pi, ctx, 1);
 		// Keep the mode label color stable (match footer/status bar).
 		editor.modeLabelColor = (text: string) => ctx.ui.theme.fg("dim", text);
@@ -1578,7 +1638,7 @@ function setEditor(pi: ExtensionAPI, ctx: ExtensionContext, history: PromptEntry
 
 		editor.borderColor = borderColor;
 		editor.lockBorderColor();
-		installOrchestratorSubmitRouter(editor, pi, ctx);
+		installPromptSubmitRouter(editor, pi, ctx);
 		for (const prompt of history) {
 			editor.addToHistory?.(prompt.text);
 		}
