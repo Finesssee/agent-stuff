@@ -27,8 +27,26 @@ test("normalizeOrchestratorModeConfig fills defaults and clamps numeric bounds",
 	assert.equal(config.missionBoundary, "mission-first");
 	assert.equal(config.maxWorkers, 3);
 	assert.equal(config.reviewRetryCap, 1);
-	assert.equal(config.roles.worker.modelId, "composer-2-fast");
+	assert.equal(config.workers.primary.modelId, "composer-2-fast");
+	assert.ok(config.workers.pool.length >= 1);
 	assert.equal(config.roles.planner.modelId, "gpt-5.4");
+});
+
+test("normalizeOrchestratorModeConfig migrates legacy single worker into primary worker", () => {
+	const config = normalizeOrchestratorModeConfig({
+		roles: {
+			worker: {
+				provider: "smart",
+				modelId: "kimi-k2.5",
+				thinkingLevel: "low",
+			},
+		},
+	});
+
+	assert.equal(config.workers.primary.provider, "smart");
+	assert.equal(config.workers.primary.modelId, "kimi-k2.5");
+	assert.equal(config.workers.primary.thinkingLevel, "low");
+	assert.ok(config.workers.pool.length >= 1);
 });
 
 test("getDisplayedModeLabel keeps behavioral label stable across overlays and presets", () => {
@@ -53,6 +71,7 @@ test("behavior prompts include key orchestration guidance", () => {
 
 	assert.match(orchestratorPrompt, /Behavior mode: Orchestrator/);
 	assert.match(orchestratorPrompt, /smart\/composer-2-fast/);
+	assert.match(orchestratorPrompt, /Worker pool/);
 	assert.match(orchestratorPrompt, /Mission Control/);
 	assert.match(planPrompt, /Behavior mode: Plan/);
 	assert.match(planPrompt, /planning-first mode/);

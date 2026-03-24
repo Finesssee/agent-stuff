@@ -16,6 +16,7 @@ export type OrchestratorRunRecord = {
 	status: "running" | "completed" | "failed" | "escalated";
 	verdict?: OrchestratorRunVerdict;
 	workerCount: number;
+	workerModels: string[];
 	reviewCycle: number;
 	reviewRetryCap: number;
 	missionHint: boolean;
@@ -95,6 +96,9 @@ function normalizeRunRecord(value: unknown): OrchestratorRunRecord | undefined {
 		status,
 		verdict,
 		workerCount: typeof record.workerCount === "number" && Number.isFinite(record.workerCount) ? Math.max(0, Math.round(record.workerCount)) : 0,
+		workerModels: Array.isArray(record.workerModels)
+			? [...new Set(record.workerModels.filter((item): item is string => typeof item === "string" && item.trim().length > 0))]
+			: [],
 		reviewCycle: typeof record.reviewCycle === "number" && Number.isFinite(record.reviewCycle) ? Math.max(0, Math.round(record.reviewCycle)) : 0,
 		reviewRetryCap: typeof record.reviewRetryCap === "number" && Number.isFinite(record.reviewRetryCap) ? Math.max(1, Math.round(record.reviewRetryCap)) : 1,
 		missionHint: record.missionHint === true,
@@ -165,6 +169,9 @@ export function buildOrchestratorWidgetLines(record: OrchestratorRunRecord): str
 	];
 	if (record.workerCount > 0) {
 		lines.push(`- Workers: ${record.workerCount}`);
+	}
+	if (record.workerModels.length > 0) {
+		lines.push(`- Models: ${record.workerModels.join(", ")}`);
 	}
 	if (record.reviewCycle > 0) {
 		lines.push(`- Review cycle: ${record.reviewCycle}/${record.reviewRetryCap}`);

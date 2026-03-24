@@ -18,6 +18,11 @@ export type RoleProfile = {
 	thinkingLevel?: ThinkingLevel;
 };
 
+export type WorkerPoolConfig = {
+	primary: RoleProfile;
+	pool: RoleProfile[];
+};
+
 export type OrchestratorModeConfig = {
 	version: 1;
 	triggerPolicy: "non-trivial" | "always";
@@ -28,9 +33,9 @@ export type OrchestratorModeConfig = {
 	roles: {
 		planner: RoleProfile;
 		orchestrator: RoleProfile;
-		worker: RoleProfile;
 		reviewer: RoleProfile;
 	};
+	workers: WorkerPoolConfig;
 };
 
 const KNOWN_SMART_PROVIDER_MODEL_IDS = new Set([
@@ -57,8 +62,18 @@ const DEFAULT_ORCHESTRATOR_MODE_CONFIG: OrchestratorModeConfig = {
 	roles: {
 		planner: { provider: "smart", modelId: "gpt-5.4", thinkingLevel: "xhigh" },
 		orchestrator: { provider: "smart", modelId: "opus-4-6", thinkingLevel: "high" },
-		worker: { provider: "smart", modelId: "composer-2-fast", thinkingLevel: "off" },
 		reviewer: { provider: "smart", modelId: "gpt-5.4", thinkingLevel: "high" },
+	},
+	workers: {
+		primary: { provider: "smart", modelId: "composer-2-fast", thinkingLevel: "off" },
+		pool: [
+			{ provider: "smart", modelId: "composer-2", thinkingLevel: "off" },
+			{ provider: "smart", modelId: "gpt-5.4-mini", thinkingLevel: "high" },
+			{ provider: "smart", modelId: "gpt-5.3-codex-spark", thinkingLevel: "high" },
+			{ provider: "smart", modelId: "kimi-k2.5", thinkingLevel: "off" },
+			{ provider: "smart", modelId: "minimax-m2.5", thinkingLevel: "high" },
+			{ provider: "smart", modelId: "glm-5", thinkingLevel: "off" },
+		],
 	},
 };
 
@@ -102,9 +117,43 @@ function normalizeRoleProfile(value: unknown, fallback: RoleProfile): RoleProfil
 	};
 }
 
+function roleProfileKey(profile: RoleProfile): string {
+	return `${profile.provider}/${profile.modelId}:${profile.thinkingLevel ?? "off"}`;
+}
+
+function normalizeWorkerPool(
+	value: unknown,
+	fallback: WorkerPoolConfig,
+	legacyWorker?: unknown,
+): WorkerPoolConfig {
+	const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+	const primaryFallback = legacyWorker
+		? normalizeRoleProfile(legacyWorker, fallback.primary)
+		: fallback.primary;
+	const primary = normalizeRoleProfile(record.primary, primaryFallback);
+	const rawPool = Array.isArray(record.pool)
+		? record.pool
+		: Array.isArray((value as Record<string, unknown> | undefined)?.pool)
+			? ((value as Record<string, unknown>).pool as unknown[])
+			: undefined;
+	const poolSource = rawPool ?? fallback.pool;
+	const pool: RoleProfile[] = [];
+	const seen = new Set([roleProfileKey(primary)]);
+	for (const entry of poolSource) {
+		const normalized = normalizeRoleProfile(entry, fallback.primary);
+		const key = roleProfileKey(normalized);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		pool.push(normalized);
+		if (pool.length >= 6) break;
+	}
+	return { primary, pool };
+}
+
 export function normalizeOrchestratorModeConfig(value: unknown): OrchestratorModeConfig {
 	const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 	const rawRoles = record.roles && typeof record.roles === "object" ? (record.roles as Record<string, unknown>) : {};
+	const rawWorkers = record.workers && typeof record.workers === "object" ? (record.workers as Record<string, unknown>) : {};
 
 	const maxWorkers = typeof record.maxWorkers === "number" && Number.isFinite(record.maxWorkers)
 		? Math.min(3, Math.max(1, Math.round(record.maxWorkers)))
@@ -130,9 +179,9 @@ export function normalizeOrchestratorModeConfig(value: unknown): OrchestratorMod
 		roles: {
 			planner: normalizeRoleProfile(rawRoles.planner, DEFAULT_ORCHESTRATOR_MODE_CONFIG.roles.planner),
 			orchestrator: normalizeRoleProfile(rawRoles.orchestrator, DEFAULT_ORCHESTRATOR_MODE_CONFIG.roles.orchestrator),
-			worker: normalizeRoleProfile(rawRoles.worker, DEFAULT_ORCHESTRATOR_MODE_CONFIG.roles.worker),
 			reviewer: normalizeRoleProfile(rawRoles.reviewer, DEFAULT_ORCHESTRATOR_MODE_CONFIG.roles.reviewer),
 		},
+		workers: normalizeWorkerPool(rawWorkers, DEFAULT_ORCHESTRATOR_MODE_CONFIG.workers, rawRoles.worker),
 	};
 }
 
@@ -213,6 +262,9 @@ export function buildPlanModePrompt(): string {
 }
 
 export function buildOrchestratorModePrompt(config: OrchestratorModeConfig): string {
+	const poolText = config.workers.pool.length > 0
+		? config.workers.pool.map((profile) => formatProfile(profile)).join(", ")
+		: "(none)";
 	const directHandlingRule =
 		config.triggerPolicy === "always"
 			? "Assume orchestration is the default for nearly all real work; stay direct only for one-command checks or tiny replies that clearly do not benefit from decomposition."
@@ -235,11 +287,13 @@ export function buildOrchestratorModePrompt(config: OrchestratorModeConfig): str
 		"Default orchestration pipeline:",
 		`1. Planning leg via subagent agent "planner" using model override ${formatProfile(config.roles.planner)}.`,
 		`2. Main orchestration leg stays in this session using ${formatProfile(config.roles.orchestrator)} as the active mode profile.`,
-		`3. Worker leg via subagent workers using model override ${formatProfile(config.roles.worker)}.`,
+		`3. Worker leg via subagent workers with primary ${formatProfile(config.workers.primary)}.`,
+		`   Worker pool: ${poolText}.`,
 		`4. Reviewer gate via subagent agent "reviewer" using model override ${formatProfile(config.roles.reviewer)}.`,
 		"",
 		"Execution rules:",
 		`- Worker fanout is adaptive with a hard cap of ${config.maxWorkers}. Use fewer workers unless the task cleanly splits.`,
+		"- Use the primary worker first, then pull from the worker pool for parallel slices.",
 		`- Reviewer is mandatory for every orchestrated run.`,
 		`- Reviewer-driven repair loops may continue automatically, but must stop after ${config.reviewRetryCap} review cycles and then surface the bounded failure clearly.`,
 		"- Keep the main session focused on routing, decomposition, synthesis, and conflict resolution.",

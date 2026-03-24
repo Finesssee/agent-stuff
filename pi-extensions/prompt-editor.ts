@@ -976,6 +976,12 @@ function formatRoleProfile(profile: RoleProfile): string {
 	return profile.thinkingLevel && profile.thinkingLevel !== "off" ? `${base}:${profile.thinkingLevel}` : base;
 }
 
+function formatWorkerPoolSummary(pool: RoleProfile[]): string {
+	if (pool.length === 0) return "(none)";
+	const labels = pool.map((profile) => formatRoleProfile(profile));
+	return labels.length <= 2 ? labels.join(", ") : `${labels.slice(0, 2).join(", ")} +${labels.length - 2} more`;
+}
+
 async function pickSmallIntegerUI(
 	ctx: ExtensionContext,
 	title: string,
@@ -1028,6 +1034,54 @@ async function editRoleProfileUI(
 	}
 }
 
+async function editWorkerPoolUI(
+	ctx: ExtensionContext,
+	pool: RoleProfile[],
+): Promise<RoleProfile[] | undefined> {
+	if (!ctx.hasUI) return undefined;
+	const next = pool.map((profile) => ({ ...profile }));
+
+	while (true) {
+		const summary = formatWorkerPoolSummary(next);
+		const actions = [
+			"Add worker",
+			...next.map((profile, index) => `Edit worker ${index + 1}: ${formatRoleProfile(profile)}`),
+			...(next.length > 0 ? next.map((profile, index) => `Remove worker ${index + 1}: ${formatRoleProfile(profile)}`) : []),
+			MODE_UI_BACK,
+		];
+		const action = await ctx.ui.select(`Edit worker pool  ${summary}`, actions);
+		if (!action || action === MODE_UI_BACK) return next;
+
+		if (action === "Add worker") {
+			const selected = await pickModelForModeUI(ctx, {});
+			if (!selected) continue;
+			next.push({
+				provider: selected.provider,
+				modelId: selected.modelId,
+				thinkingLevel: "off",
+			});
+			continue;
+		}
+
+		const editMatch = action.match(/^Edit worker (\d+): /);
+		if (editMatch) {
+			const index = Number.parseInt(editMatch[1] ?? "", 10) - 1;
+			if (index < 0 || index >= next.length) continue;
+			const updated = await editRoleProfileUI(ctx, `worker ${index + 1}`, next[index]!);
+			if (!updated) continue;
+			next[index] = updated;
+			continue;
+		}
+
+		const removeMatch = action.match(/^Remove worker (\d+): /);
+		if (removeMatch) {
+			const index = Number.parseInt(removeMatch[1] ?? "", 10) - 1;
+			if (index < 0 || index >= next.length) continue;
+			next.splice(index, 1);
+		}
+	}
+}
+
 async function syncOrchestratorPrimaryRole(spec: ModeSpec): Promise<void> {
 	const config = await readOrchestratorModeConfig();
 	config.roles.orchestrator = {
@@ -1063,7 +1117,8 @@ async function editOrchestratorProfileUI(pi: ExtensionAPI, ctx: ExtensionContext
 	while (true) {
 		const plannerLabel = `Planner role: ${formatRoleProfile(config.roles.planner)}`;
 		const orchestratorLabel = `Orchestrator role: ${formatRoleProfile(config.roles.orchestrator)}`;
-		const workerLabel = `Worker role: ${formatRoleProfile(config.roles.worker)}`;
+		const primaryWorkerLabel = `Primary worker: ${formatRoleProfile(config.workers.primary)}`;
+		const workerPoolLabel = `Worker pool: ${formatWorkerPoolSummary(config.workers.pool)}`;
 		const reviewerLabel = `Reviewer role: ${formatRoleProfile(config.roles.reviewer)}`;
 		const triggerLabel = `Trigger policy: ${config.triggerPolicy}`;
 		const missionLabel = `Mission boundary: ${config.missionBoundary}`;
@@ -1073,7 +1128,8 @@ async function editOrchestratorProfileUI(pi: ExtensionAPI, ctx: ExtensionContext
 		const action = await ctx.ui.select("Edit Orchestrator profile", [
 			plannerLabel,
 			orchestratorLabel,
-			workerLabel,
+			primaryWorkerLabel,
+			workerPoolLabel,
 			reviewerLabel,
 			triggerLabel,
 			missionLabel,
@@ -1099,10 +1155,23 @@ async function editOrchestratorProfileUI(pi: ExtensionAPI, ctx: ExtensionContext
 			continue;
 		}
 
-		if (action === workerLabel) {
-			const updated = await editRoleProfileUI(ctx, "worker", config.roles.worker);
+		if (action === primaryWorkerLabel) {
+			const updated = await editRoleProfileUI(ctx, "primary worker", config.workers.primary);
 			if (!updated) continue;
-			config.roles.worker = updated;
+			config.workers.primary = updated;
+			config.workers.pool = config.workers.pool.filter((profile) =>
+				formatRoleProfile(profile) !== formatRoleProfile(updated)
+			);
+			await persistOrchestratorConfig(pi, ctx, config);
+			continue;
+		}
+
+		if (action === workerPoolLabel) {
+			const updated = await editWorkerPoolUI(ctx, config.workers.pool);
+			if (!updated) continue;
+			config.workers.pool = updated.filter((profile) =>
+				formatRoleProfile(profile) !== formatRoleProfile(config.workers.primary)
+			);
 			await persistOrchestratorConfig(pi, ctx, config);
 			continue;
 		}

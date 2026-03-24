@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+	assignWorkerProfiles,
 	extractJsonObject,
 	normalizeOrchestratorPlan,
 	normalizeOrchestratorReview,
@@ -8,7 +9,7 @@ import {
 	shouldAutoRouteOrchestratorTask,
 } from "./orchestrator-controller.ts";
 import registerOrchestratorController from "./orchestrator-controller.ts";
-import { shouldApplyBehaviorModePrompt } from "./orchestrator-mode.ts";
+import { normalizeOrchestratorModeConfig, shouldApplyBehaviorModePrompt } from "./orchestrator-mode.ts";
 
 test("extractJsonObject parses fenced JSON payloads", () => {
 	const parsed = extractJsonObject('```json\n{"summary":"ok","workerTasks":["one"]}\n```') as {
@@ -57,6 +58,45 @@ test("normalizeOrchestratorReview defaults to approved without findings", () => 
 	const review = normalizeOrchestratorReview({}, "looks good", 3);
 	assert.equal(review.verdict, "approved");
 	assert.equal(review.summary, "looks good");
+});
+
+test("assignWorkerProfiles uses the primary worker first and then the pool", () => {
+	const config = normalizeOrchestratorModeConfig({
+		maxWorkers: 3,
+		workers: {
+			primary: { provider: "smart", modelId: "composer-2-fast", thinkingLevel: "off" },
+			pool: [
+				{ provider: "smart", modelId: "composer-2", thinkingLevel: "off" },
+				{ provider: "smart", modelId: "gpt-5.4-mini", thinkingLevel: "high" },
+			],
+		},
+	});
+
+	const assignments = assignWorkerProfiles(config, ["task a", "task b", "task c"]);
+	assert.deepEqual(
+		assignments.map((item) => item.profile.modelId),
+		["composer-2-fast", "composer-2", "gpt-5.4-mini"],
+	);
+	assert.deepEqual(
+		assignments.map((item) => item.task),
+		["task a", "task b", "task c"],
+	);
+});
+
+test("assignWorkerProfiles cycles the pool deterministically when needed", () => {
+	const config = normalizeOrchestratorModeConfig({
+		maxWorkers: 3,
+		workers: {
+			primary: { provider: "smart", modelId: "composer-2-fast", thinkingLevel: "off" },
+			pool: [{ provider: "smart", modelId: "kimi-k2.5", thinkingLevel: "off" }],
+		},
+	});
+
+	const assignments = assignWorkerProfiles(config, ["task a", "task b", "task c"]);
+	assert.deepEqual(
+		assignments.map((item) => item.profile.modelId),
+		["composer-2-fast", "kimi-k2.5", "kimi-k2.5"],
+	);
 });
 
 test("behavior prompts do not apply inside nested subagents", () => {

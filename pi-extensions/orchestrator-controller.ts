@@ -87,6 +87,7 @@ type MissionLaunchResponse = {
 type WorkerRun = {
 	agent: string;
 	task: string;
+	model: string;
 	output: string;
 	isError: boolean;
 	errorText?: string;
@@ -113,6 +114,7 @@ export type OrchestratorExecutionDetails = {
 	approved: boolean;
 	reviewCycles: number;
 	workerCount: number;
+	workerModels: string[];
 	missionHint: boolean;
 	verdict: OrchestratorRunVerdict;
 	missionId?: string;
@@ -121,6 +123,36 @@ export type OrchestratorExecutionDetails = {
 
 function formatRoleOverride(profile: RoleProfile): string {
 	return `${profile.provider}/${profile.modelId}`;
+}
+
+function uniqueWorkerModels(models: string[]): string[] {
+	return [...new Set(models.map((model) => model.trim()).filter(Boolean))];
+}
+
+function formatWorkerModelList(models: string[], maxItems = 3): string {
+	const unique = uniqueWorkerModels(models);
+	if (unique.length === 0) return "(none)";
+	if (unique.length <= maxItems) return unique.join(", ");
+	return `${unique.slice(0, maxItems).join(", ")} +${unique.length - maxItems} more`;
+}
+
+export function assignWorkerProfiles(
+	config: OrchestratorModeConfig,
+	workerTasks: string[],
+): Array<{ agent: string; task: string; profile: RoleProfile; modelOverride: string }> {
+	const activeTasks = workerTasks.slice(0, config.maxWorkers);
+	const pool = config.workers.pool.length > 0 ? config.workers.pool : [config.workers.primary];
+	return activeTasks.map((task, index) => {
+		const profile = index === 0
+			? config.workers.primary
+			: pool[(index - 1) % pool.length] ?? config.workers.primary;
+		return {
+			agent: "worker",
+			task,
+			profile,
+			modelOverride: formatRoleOverride(profile),
+		};
+	});
 }
 
 function truncateText(value: string, maxLength = 96): string {
@@ -326,7 +358,7 @@ function buildReviewerTask(
 	}
 	lines.push("", "Worker outputs:");
 	for (const run of workerRuns) {
-		lines.push(`--- ${run.agent}: ${run.task}`);
+		lines.push(`--- ${run.agent} [${run.model}]: ${run.task}`);
 		if (run.isError) {
 			lines.push(`ERROR: ${run.errorText || "Worker failed without details."}`);
 		}
@@ -401,6 +433,9 @@ function buildCompactResultText(record: OrchestratorRunRecord): string {
 	if (record.workerCount > 0) {
 		lines.push(`Workers: ${record.workerCount}`);
 	}
+	if (record.workerModels?.length) {
+		lines.push(`Worker models: ${formatWorkerModelList(record.workerModels)}`);
+	}
 	if (record.reviewCycle > 0) {
 		lines.push(`Review cycles: ${record.reviewCycle}/${record.reviewRetryCap}`);
 	}
@@ -428,6 +463,7 @@ function buildRunMarkdown(record: OrchestratorRunRecord): string {
 		`- Verdict: ${record.verdict ?? record.status}`,
 		`- Phase: ${record.phase}`,
 		`- Workers: ${record.workerCount}`,
+		`- Worker models: ${formatWorkerModelList(record.workerModels ?? [])}`,
 		`- Review cycle: ${record.reviewCycle}/${record.reviewRetryCap}`,
 		`- Started: ${new Date(record.startedAt).toISOString()}`,
 		`- Updated: ${new Date(record.updatedAt).toISOString()}`,
@@ -469,6 +505,7 @@ function buildStatusText(state: Awaited<ReturnType<typeof readOrchestratorRuntim
 		lines.push(`Task: ${active.taskSummary}`);
 		lines.push(`Phase: ${active.phase}`);
 		if (active.workerCount > 0) lines.push(`Workers: ${active.workerCount}`);
+		if (active.workerModels?.length) lines.push(`Worker models: ${formatWorkerModelList(active.workerModels)}`);
 		if (active.reviewCycle > 0) lines.push(`Review cycle: ${active.reviewCycle}/${active.reviewRetryCap}`);
 		if (active.missionId) lines.push(`Mission: ${active.missionId}`);
 	}
@@ -644,6 +681,7 @@ function buildExecutionResult(record: OrchestratorRunRecord): { text: string; de
 			approved: record.verdict === "approved",
 			reviewCycles: record.reviewCycle,
 			workerCount: record.workerCount,
+			workerModels: record.workerModels ?? [],
 			missionHint: record.missionHint,
 			verdict: record.verdict ?? (record.status === "failed" ? "failed" : "revise"),
 			missionId: record.missionId,
@@ -675,6 +713,7 @@ async function runOrchestrator(
 		phase: "starting",
 		status: "running",
 		workerCount: 0,
+		workerModels: [],
 		reviewCycle: 0,
 		reviewRetryCap: config.reviewRetryCap,
 		missionHint: false,
@@ -761,16 +800,19 @@ async function runOrchestrator(
 
 		while (cycle < config.reviewRetryCap) {
 			cycle += 1;
-			const activeWorkerTasks = workerTasks.slice(0, config.maxWorkers);
+			const workerAssignments = assignWorkerProfiles(config, workerTasks);
+			const activeWorkerTasks = workerAssignments.map((assignment) => assignment.task);
+			const activeWorkerModels = uniqueWorkerModels(workerAssignments.map((assignment) => assignment.modelOverride));
 			await pushState("workers", {
 				reviewCycle: cycle,
 				workerCount: activeWorkerTasks.length,
+				workerModels: activeWorkerModels,
 			});
 
-			const workerRequestTasks = activeWorkerTasks.map((workItem) => ({
-				agent: "worker",
-				task: buildWorkerTask(task, plan.summary, workItem, latestReview.summary, latestReview.blockingFindings),
-				model: formatRoleOverride(config.roles.worker),
+			const workerRequestTasks = workerAssignments.map((assignment) => ({
+				agent: assignment.agent,
+				task: buildWorkerTask(task, plan.summary, assignment.task, latestReview.summary, latestReview.blockingFindings),
+				model: assignment.modelOverride,
 			}));
 
 			const workerResponse = await requestDelegation(
@@ -781,7 +823,7 @@ async function runOrchestrator(
 					task: workerRequestTasks[0]!.task,
 					tasks: workerRequestTasks,
 					context: contextMode,
-					model: formatRoleOverride(config.roles.worker),
+					model: workerRequestTasks[0]!.model,
 					cwd,
 				},
 				signal,
@@ -790,6 +832,7 @@ async function runOrchestrator(
 			latestRuns = (workerResponse.parallelResults ?? []).map((result, index) => ({
 				agent: result.agent || workerRequestTasks[index]!.agent,
 				task: activeWorkerTasks[index]!,
+				model: workerRequestTasks[index]!.model,
 				output: extractFinalAssistantText(result.messages) || result.errorText || "",
 				isError: result.isError,
 				errorText: result.errorText,
@@ -798,6 +841,7 @@ async function runOrchestrator(
 				latestRuns = [{
 					agent: "worker",
 					task: activeWorkerTasks[0]!,
+					model: workerRequestTasks[0]!.model,
 					output: extractFinalAssistantText(workerResponse.messages) || workerResponse.errorText || "",
 					isError: workerResponse.isError,
 					errorText: workerResponse.errorText,
@@ -806,6 +850,7 @@ async function runOrchestrator(
 
 			await pushState("review", {
 				workerCount: latestRuns.length,
+				workerModels: uniqueWorkerModels(latestRuns.map((run) => run.model)),
 				reviewCycle: cycle,
 			});
 
@@ -836,6 +881,7 @@ async function runOrchestrator(
 				blockingFindings: latestReview.blockingFindings,
 				reviewCycle: cycle,
 				workerCount: latestRuns.length,
+				workerModels: uniqueWorkerModels(latestRuns.map((run) => run.model)),
 			});
 
 			if (latestReview.verdict === "approved") break;
@@ -860,6 +906,7 @@ async function runOrchestrator(
 			blockingFindings: latestReview.blockingFindings,
 			reviewCycle: cycle,
 			workerCount: latestRuns.length,
+			workerModels: uniqueWorkerModels(latestRuns.map((run) => run.model)),
 			phase: "completed",
 			updatedAt: Date.now(),
 		};
@@ -974,6 +1021,7 @@ export default function registerOrchestratorController(pi: ExtensionAPI): void {
 							phase,
 							runId: record.runId,
 							workerCount: record.workerCount,
+							workerModels: record.workerModels ?? [],
 							reviewCycle: record.reviewCycle,
 						},
 					} as never);
