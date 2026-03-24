@@ -5,6 +5,7 @@ All notable changes to agent-stuff are documented here.
 ## Unreleased
 
 * Fixed `intercepted-commands/python` and `intercepted-commands/python3` to avoid recursive `uv` spawn loops by resolving a uv-managed non-shim interpreter for `uv run --python`.
+* Added a separate `behavior-modes` extension so `Plan` and `Orchestrator` runtime behavior is split cleanly from the prompt editor UI, while keeping the fixed `Normal`, `Plan`, and `Orchestrator` ring plus editor-level `Shift+Tab` cycling and editable Orchestrator role settings.
 
 ## 1.5.0
 
