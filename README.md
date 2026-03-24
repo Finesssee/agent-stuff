@@ -33,7 +33,7 @@ All skills live in the [`skills`](skills) folder:
 Custom extensions for Pi Coding Agent are in [`pi-extensions`](pi-extensions):
 
 * [`answer.ts`](pi-extensions/answer.ts) - Interactive TUI for answering questions one by one.
-* [`behavior-modes.ts`](pi-extensions/behavior-modes.ts) - Runtime hook for `Plan` and `Orchestrator` behavior prompts, fed by the shared behavior-mode state.
+* [`behavior-modes.ts`](pi-extensions/behavior-modes.ts) - Runtime hook for `Plan` and `Orchestrator` behavior prompts, fed by the shared behavior-mode state and kept out of nested subagent sessions.
 * [`btw.ts`](pi-extensions/btw.ts) - Simple `/btw` side-chat popover with optional summary injection back into the main chat on close.
 * [`context.ts`](pi-extensions/context.ts) - Context breakdown (extensions, skills, AGENTS.md/CLAUDE.md) + token usage, including loaded-skill highlighting. Prints plain text directly in headless `pi -p` usage.
 * [`control.ts`](pi-extensions/control.ts) - Session control helpers (list controllable sessions, etc.).
@@ -43,9 +43,10 @@ Custom extensions for Pi Coding Agent are in [`pi-extensions`](pi-extensions):
 * [`loop.ts`](pi-extensions/loop.ts) - Prompt loop for rapid iterative coding with optional auto-continue.
 * [`multi-edit.ts`](pi-extensions/multi-edit.ts) - Replaces the built-in `edit` tool with batch `multi` edits and Codex-style `patch` support, including preflight validation. Kept repo-local and not packaged by default to avoid `edit` conflicts with other installed edit providers such as `morph-fast-apply`.
 * [`notify.ts`](pi-extensions/notify.ts) - Native desktop notifications when the agent finishes.
-* [`orchestrator-controller.ts`](pi-extensions/orchestrator-controller.ts) - Explicit `orchestrate` tool and `/orchestrate` command that run planner, adaptive worker fanout, mandatory reviewer, and bounded repair loops on top of the subagent bridge.
+* [`orchestrator-controller.ts`](pi-extensions/orchestrator-controller.ts) - Explicit `orchestrate` tool and `/orchestrate` command family with durable run artifacts, `/orchestrate status`, `/orchestrate inspect`, mission escalation through Mission Control, and planner -> worker fanout -> reviewer orchestration on top of the subagent bridge.
+* [`orchestrator-runtime.ts`](pi-extensions/orchestrator-runtime.ts) - Durable orchestrator runtime state under `~/.pi/agent/orchestrator/`, including active run state, per-run JSON/Markdown artifacts, and widget/status helpers.
 * [`precise-edit.ts`](pi-extensions/precise-edit.ts) - Adds a separate `precise_edit` tool for exact single or multi-block replacements without replacing `multi-edit`.
-* [`prompt-editor.ts`](pi-extensions/prompt-editor.ts) - In-editor behavioral mode selector with a fixed `Normal -> Plan -> Orchestrator` ring, saved presets, editor-level `Shift+Tab` cycling, and an editable Orchestrator role stack.
+* [`prompt-editor.ts`](pi-extensions/prompt-editor.ts) - In-editor behavioral mode selector with a fixed `Normal -> Plan -> Orchestrator` ring, saved presets, editor-level `Shift+Tab` cycling, an editable Orchestrator role stack, and interactive auto-routing of non-trivial prompts through the orchestrator controller.
 * [`review.ts`](pi-extensions/review.ts) - Code review command (working tree, PR-style diff, commits, custom instructions, optional fix loop).
 * [`session-breakdown.ts`](pi-extensions/session-breakdown.ts) - TUI for 7/30/90-day session and cost analysis with usage graph.
 * [`todos.ts`](pi-extensions/todos.ts) - Todo manager extension with file-backed storage and TUI.

@@ -6,7 +6,8 @@ All notable changes to agent-stuff are documented here.
 
 * Fixed `intercepted-commands/python` and `intercepted-commands/python3` to avoid recursive `uv` spawn loops by resolving a uv-managed non-shim interpreter for `uv run --python`.
 * Added a separate `behavior-modes` extension so `Plan` and `Orchestrator` runtime behavior is split cleanly from the prompt editor UI, while keeping the fixed `Normal`, `Plan`, and `Orchestrator` ring plus editor-level `Shift+Tab` cycling and editable Orchestrator role settings.
-* Added an explicit `orchestrator-controller` extension with an `orchestrate` tool and `/orchestrate` command that run planner, worker fanout, reviewer, and bounded repair loops over the subagent bridge.
+* Added interactive Orchestrator-mode auto-routing so non-trivial prompts in the real Pi UI now dispatch through the orchestrator controller by default instead of relying on the model to remember the tool manually.
+* Expanded `orchestrator-controller` into a `/orchestrate` command family with `status` and `inspect`, durable run artifacts under `~/.pi/agent/orchestrator/`, compact final summaries, and mission escalation into Mission Control when work is mission-shaped.
 * Prevented nested subagents from inheriting `Plan` or `Orchestrator` behavior prompts, which avoids recursive controller re-entry during planner/worker/reviewer runs.
 
 ## 1.5.0
