@@ -25,6 +25,7 @@
       "./pi-extensions/go-to-bed.ts",
       "./pi-extensions/loop.ts",
       "./pi-extensions/notify.ts",
+      "./pi-extensions/orchestrator-controller.ts",
       "./pi-extensions/precise-edit.ts",
       "./pi-extensions/prompt-editor.ts",
       "./pi-extensions/review.ts",

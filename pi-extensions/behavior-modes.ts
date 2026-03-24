@@ -4,10 +4,12 @@ import {
 	buildPlanModePrompt,
 	readBehaviorModeState,
 	readOrchestratorModeConfig,
+	shouldApplyBehaviorModePrompt,
 } from "./orchestrator-mode.ts";
 
 export default function behaviorModesExtension(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (_event, ctx) => {
+		if (!shouldApplyBehaviorModePrompt()) return undefined;
 		const behaviorState = await readBehaviorModeState();
 		if (behaviorState.currentBehavior === "normal") return undefined;
 		if (behaviorState.currentBehavior === "plan") {

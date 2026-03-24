@@ -68,6 +68,11 @@ export function getBehaviorModeStatePath(): string {
 	return path.join(getGlobalAgentDir(), "behavior-mode-state.json");
 }
 
+export function shouldApplyBehaviorModePrompt(env: NodeJS.ProcessEnv = process.env): boolean {
+	const depth = Number(env.PI_SUBAGENT_DEPTH ?? "0");
+	return !Number.isFinite(depth) || depth <= 0;
+}
+
 function normalizeThinkingLevel(level: unknown): ThinkingLevel | undefined {
 	if (typeof level !== "string") return undefined;
 	const allowed: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
@@ -205,6 +210,10 @@ export function buildOrchestratorModePrompt(config: OrchestratorModeConfig): str
 		"You are the main orchestrator for this session.",
 		directHandlingRule,
 		"",
+		"Preferred execution surface:",
+		"- For non-trivial work, prefer the orchestrate tool or /orchestrate command instead of manually juggling planner/worker/reviewer calls.",
+		"- Use raw subagent calls only when you need a one-off specialist step that does not justify the full controller.",
+		"",
 		"Default orchestration pipeline:",
 		`1. Planning leg via subagent agent "planner" using model override ${formatProfile(config.roles.planner)}.`,
 		`2. Main orchestration leg stays in this session using ${formatProfile(config.roles.orchestrator)} as the active mode profile.`,
@@ -216,7 +225,7 @@ export function buildOrchestratorModePrompt(config: OrchestratorModeConfig): str
 		`- Reviewer is mandatory for every orchestrated run.`,
 		`- Reviewer-driven repair loops may continue automatically, but must stop after ${config.reviewRetryCap} review cycles and then surface the bounded failure clearly.`,
 		"- Keep the main session focused on routing, decomposition, synthesis, and conflict resolution.",
-		"- Prefer the subagent tool with explicit model overrides so the editable role stack actually takes effect.",
+		"- When using raw subagent calls, prefer explicit model overrides so the editable role stack actually takes effect.",
 		missionBoundaryRule,
 	].join("\n");
 }
