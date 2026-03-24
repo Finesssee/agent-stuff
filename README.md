@@ -36,7 +36,7 @@ Custom extensions for Pi Coding Agent are in [`pi-extensions`](pi-extensions):
 * [`behavior-modes.ts`](pi-extensions/behavior-modes.ts) - Runtime hook for `Plan` and `Orchestrator` behavior prompts, fed by the shared behavior-mode state and kept out of nested subagent sessions.
 * [`btw.ts`](pi-extensions/btw.ts) - Simple `/btw` side-chat popover with optional summary injection back into the main chat on close.
 * [`context.ts`](pi-extensions/context.ts) - Context breakdown (extensions, skills, AGENTS.md/CLAUDE.md) + token usage, including loaded-skill highlighting. Prints plain text directly in headless `pi -p` usage.
-* [`control.ts`](pi-extensions/control.ts) - Session control helpers (list controllable sessions, etc.).
+* [`control.ts`](pi-extensions/control.ts) - Session control helpers (list controllable sessions, etc.), without publishing a footer session token during normal Pi use.
 * [`files.ts`](pi-extensions/files.ts) - Unified file browser with git status + session references and reveal/open/edit/diff actions. Requires a real interactive TTY and now prints a one-line headless error in `pi -p` usage instead of hanging.
 * [`split-fork.ts`](pi-extensions/split-fork.ts) - `/split-fork` command to branch the current session into a new pi process in a right-hand Ghostty split.
 * [`go-to-bed.ts`](pi-extensions/go-to-bed.ts) - Late-night safety guard with explicit confirmation after midnight.

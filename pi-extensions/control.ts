@@ -947,12 +947,9 @@ async function stopControlServer(state: SocketState): Promise<void> {
 
 function updateStatus(ctx: ExtensionContext | null, enabled: boolean): void {
 	if (!ctx?.hasUI) return;
-	if (!enabled) {
-		ctx.ui.setStatus(STATUS_KEY, undefined);
-		return;
-	}
-	const sessionId = ctx.sessionManager.getSessionId();
-	ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("dim", `session ${sessionId}`));
+	void enabled;
+	ctx.sessionManager.getSessionId();
+	ctx.ui.setStatus(STATUS_KEY, undefined);
 }
 
 function updateSessionEnv(ctx: ExtensionContext | null, enabled: boolean): void {
