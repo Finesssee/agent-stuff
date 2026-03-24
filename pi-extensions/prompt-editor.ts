@@ -1402,6 +1402,54 @@ function historiesMatch(a: PromptEntry[], b: PromptEntry[]): boolean {
 	return true;
 }
 
+function installOrchestratorSubmitRouter(editor: PromptEditor, pi: ExtensionAPI, ctx: ExtensionContext): void {
+	const marker = editor as PromptEditor & {
+		__orchestratorSubmitWrapped?: boolean;
+		submitValue?: (() => void) | undefined;
+	};
+	if (marker.__orchestratorSubmitWrapped) return;
+	marker.__orchestratorSubmitWrapped = true;
+
+	const originalSubmitValue = typeof marker.submitValue === "function" ? marker.submitValue.bind(editor) : undefined;
+	if (!originalSubmitValue) return;
+
+	marker.submitValue = () => {
+		const trimmed = editor.getExpandedText().trim();
+
+		void (async () => {
+			const config = await readOrchestratorModeConfig();
+			const shouldRoute =
+				getActiveBehaviorMode() === "orchestrator" &&
+				ctx.hasUI &&
+				shouldAutoRouteOrchestratorTask(trimmed, config.triggerPolicy);
+
+			if (!shouldRoute) {
+				originalSubmitValue();
+				return;
+			}
+
+			const originalOnSubmit = editor.onSubmit;
+			editor.onSubmit = undefined;
+			try {
+				originalSubmitValue();
+			} finally {
+				editor.onSubmit = originalOnSubmit;
+			}
+
+			try {
+				await runInteractiveOrchestratorTask(pi, ctx, trimmed, {
+					contextMode: "fork",
+					timeoutMs: 10 * 60 * 1000,
+					clearEditor: false,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(message, "error");
+			}
+		})();
+	};
+}
+
 function setEditor(pi: ExtensionAPI, ctx: ExtensionContext, history: PromptEntry[]) {
 	ctx.ui.setEditorComponent((tui, theme, keybindings) => {
 		const editor = new PromptEditor(tui, theme, keybindings);
@@ -1420,40 +1468,10 @@ function setEditor(pi: ExtensionAPI, ctx: ExtensionContext, history: PromptEntry
 
 		editor.borderColor = borderColor;
 		editor.lockBorderColor();
+		installOrchestratorSubmitRouter(editor, pi, ctx);
 		for (const prompt of history) {
 			editor.addToHistory?.(prompt.text);
 		}
-		queueMicrotask(() => {
-			const marker = editor as PromptEditor & { __orchestratorSubmitWrapped?: boolean };
-			if (marker.__orchestratorSubmitWrapped) return;
-			marker.__orchestratorSubmitWrapped = true;
-			const originalSubmit = editor.onSubmit?.bind(editor);
-			if (!originalSubmit) return;
-
-			editor.onSubmit = async (text: string) => {
-				const config = await readOrchestratorModeConfig();
-				const trimmed = text.trim();
-				const shouldRoute =
-					getActiveBehaviorMode() === "orchestrator" &&
-					ctx.hasUI &&
-					shouldAutoRouteOrchestratorTask(trimmed, config.triggerPolicy);
-
-				if (!shouldRoute) {
-					return await originalSubmit(text);
-				}
-
-				try {
-					await runInteractiveOrchestratorTask(pi, ctx, trimmed, {
-						contextMode: "fork",
-						timeoutMs: 10 * 60 * 1000,
-						clearEditor: true,
-					});
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					ctx.ui.notify(message, "error");
-				}
-			};
-		});
 		return editor;
 	});
 }
