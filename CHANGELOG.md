@@ -5,6 +5,7 @@ All notable changes to agent-stuff are documented here.
 ## Unreleased
 
 * Fixed `intercepted-commands/python` and `intercepted-commands/python3` to avoid recursive `uv` spawn loops by resolving a uv-managed non-shim interpreter for `uv run --python`.
+* Rebuilt the Orchestrator-mode UI around a shared timeline-first presentation model so the compact live widget, final result card, `/orchestrate status`, and `/orchestrate inspect` now tell the same story and expose human-readable planner/worker/reviewer progress instead of fragmented raw phase summaries.
 * Added a separate `behavior-modes` extension so `Plan` and `Orchestrator` runtime behavior is split cleanly from the prompt editor UI, while keeping the fixed `Normal`, `Plan`, and `Orchestrator` ring plus editor-level `Shift+Tab` cycling and editable Orchestrator role settings.
 * Fixed behavioral mode validation so routed `smart/...` role aliases such as `smart/opus-4-6` and `smart/composer-2-fast` no longer show bogus "unknown model" warnings in the live TUI.
 * Expanded behavioral mode virtual smart-model support so Orchestrator profiles can use newer routed families such as `smart/composer-2`, `smart/glm-5`, and `smart/minimax-m2.5` without false unknown-model warnings.
