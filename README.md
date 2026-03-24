@@ -43,6 +43,7 @@ Custom extensions for Pi Coding Agent are in [`pi-extensions`](pi-extensions):
 * [`loop.ts`](pi-extensions/loop.ts) - Prompt loop for rapid iterative coding with optional auto-continue.
 * [`multi-edit.ts`](pi-extensions/multi-edit.ts) - Replaces the built-in `edit` tool with batch `multi` edits and Codex-style `patch` support, including preflight validation. Kept repo-local and not packaged by default to avoid `edit` conflicts with other installed edit providers such as `morph-fast-apply`.
 * [`notify.ts`](pi-extensions/notify.ts) - Native desktop notifications when the agent finishes.
+* [`orchestrator-controller.ts`](pi-extensions/orchestrator-controller.ts) - Explicit `orchestrate` tool and `/orchestrate` command that run planner, adaptive worker fanout, mandatory reviewer, and bounded repair loops on top of the subagent bridge.
 * [`precise-edit.ts`](pi-extensions/precise-edit.ts) - Adds a separate `precise_edit` tool for exact single or multi-block replacements without replacing `multi-edit`.
 * [`prompt-editor.ts`](pi-extensions/prompt-editor.ts) - In-editor behavioral mode selector with a fixed `Normal -> Plan -> Orchestrator` ring, saved presets, editor-level `Shift+Tab` cycling, and an editable Orchestrator role stack.
 * [`review.ts`](pi-extensions/review.ts) - Code review command (working tree, PR-style diff, commits, custom instructions, optional fix loop).
