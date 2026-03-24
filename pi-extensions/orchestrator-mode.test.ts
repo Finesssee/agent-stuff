@@ -4,6 +4,7 @@ import {
 	buildOrchestratorModePrompt,
 	buildPlanModePrompt,
 	getDisplayedModeLabel,
+	isKnownBehaviorModeVirtualModel,
 	normalizeBehaviorModeState,
 	normalizeOrchestratorModeConfig,
 } from "./orchestrator-mode.ts";
@@ -55,4 +56,11 @@ test("behavior prompts include key orchestration guidance", () => {
 	assert.match(orchestratorPrompt, /Mission Control/);
 	assert.match(planPrompt, /Behavior mode: Plan/);
 	assert.match(planPrompt, /planning-first mode/);
+});
+
+test("smart routed family ids are treated as known virtual mode models", () => {
+	assert.equal(isKnownBehaviorModeVirtualModel("smart", "opus-4-6"), true);
+	assert.equal(isKnownBehaviorModeVirtualModel("smart", "composer-2-fast"), true);
+	assert.equal(isKnownBehaviorModeVirtualModel("smart", "made-up-model"), false);
+	assert.equal(isKnownBehaviorModeVirtualModel("cursor", "opus-4-6"), false);
 });

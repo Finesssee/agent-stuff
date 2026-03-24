@@ -33,6 +33,17 @@ export type OrchestratorModeConfig = {
 	};
 };
 
+const KNOWN_SMART_PROVIDER_MODEL_IDS = new Set([
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.3-codex",
+	"gpt-5.3-codex-spark",
+	"opus-4-6",
+	"sonnet-4-6",
+	"composer-2-fast",
+	"kimi-k2.5",
+]);
+
 const DEFAULT_ORCHESTRATOR_MODE_CONFIG: OrchestratorModeConfig = {
 	version: 1,
 	triggerPolicy: "non-trivial",
@@ -174,6 +185,10 @@ export function isBuiltinBehaviorMode(mode: string): mode is BuiltinModeName {
 export function formatProfile(profile: RoleProfile): string {
 	const base = `${profile.provider}/${profile.modelId}`;
 	return profile.thinkingLevel && profile.thinkingLevel !== "off" ? `${base}:${profile.thinkingLevel}` : base;
+}
+
+export function isKnownBehaviorModeVirtualModel(provider: string | undefined, modelId: string | undefined): boolean {
+	return provider === "smart" && typeof modelId === "string" && KNOWN_SMART_PROVIDER_MODEL_IDS.has(modelId);
 }
 
 export function getDisplayedModeLabel(currentMode: string, lastRealMode: string): string {

@@ -9,6 +9,7 @@ import {
 	BUILTIN_MODE_RING,
 	getDisplayedModeLabel,
 	isBuiltinBehaviorMode,
+	isKnownBehaviorModeVirtualModel,
 	readOrchestratorModeConfig,
 	readBehaviorModeState,
 	saveBehaviorModeState,
@@ -624,7 +625,7 @@ async function applyMode(pi: ExtensionAPI, ctx: ExtensionContext, mode: string):
 				if (!ok && ctx.hasUI) {
 					ctx.ui.notify(`No API key available for ${spec.provider}/${spec.modelId}`, "warning");
 				}
-			} else {
+			} else if (!isKnownBehaviorModeVirtualModel(spec.provider, spec.modelId)) {
 				modelAppliedOk = false;
 				if (ctx.hasUI) {
 					ctx.ui.notify(`Mode "${mode}" references unknown model ${spec.provider}/${spec.modelId}`, "warning");

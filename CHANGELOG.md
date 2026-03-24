@@ -6,12 +6,14 @@ All notable changes to agent-stuff are documented here.
 
 * Fixed `intercepted-commands/python` and `intercepted-commands/python3` to avoid recursive `uv` spawn loops by resolving a uv-managed non-shim interpreter for `uv run --python`.
 * Added a separate `behavior-modes` extension so `Plan` and `Orchestrator` runtime behavior is split cleanly from the prompt editor UI, while keeping the fixed `Normal`, `Plan`, and `Orchestrator` ring plus editor-level `Shift+Tab` cycling and editable Orchestrator role settings.
+* Fixed behavioral mode validation so routed `smart/...` role aliases such as `smart/opus-4-6` and `smart/composer-2-fast` no longer show bogus "unknown model" warnings in the live TUI.
 * Added interactive Orchestrator-mode auto-routing so non-trivial prompts in the real Pi UI now dispatch through the orchestrator controller by default instead of relying on the model to remember the tool manually.
 * Fixed live TUI Orchestrator auto-routing by hooking the custom editor submit path directly instead of relying on Pi's internal `onSubmit` rebinding order.
 * Expanded `orchestrator-controller` into a `/orchestrate` command family with `status` and `inspect`, durable run artifacts under `~/.pi/agent/orchestrator/`, compact final summaries, and mission escalation into Mission Control when work is mission-shaped.
 * Prevented nested subagents from inheriting `Plan` or `Orchestrator` behavior prompts, which avoids recursive controller re-entry during planner/worker/reviewer runs.
 * Fixed Orchestrator chat cards to use a dedicated custom message renderer in the TUI, which removes the stray `[undefined]` header artifact from result and status views.
 * Switched the orchestrator planning leg to a dedicated `orchestrator-planner` agent so the live controller receives machine-readable JSON plans instead of markdown `plan.md` artifacts.
+* Refined the planner prompt for small bounded tasks so the orchestrator now biases toward the fewest workers that make sense instead of splitting tiny edits into needless fanout.
 
 ## 1.5.0
 

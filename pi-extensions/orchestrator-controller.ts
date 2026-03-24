@@ -266,6 +266,9 @@ function buildPlannerTask(task: string, maxWorkers: number): string {
 	return [
 		"Decompose the user's request into an execution-ready orchestration plan.",
 		`Use between 1 and ${maxWorkers} worker tasks.`,
+		"Prefer the fewest workers that make sense.",
+		"Use exactly 1 worker for small, bounded tasks in one repo unless the work cleanly splits into independent slices.",
+		"Do not split a tiny change into separate workers just for code edit, test edit, and test execution.",
 		"Return ONLY valid JSON with this exact shape:",
 		'{"summary":"...","workerTasks":["..."],"reviewFocus":["..."],"missionHint":false,"missionMode":"lightweight|full","missionReason":"optional"}',
 		"Rules:",
