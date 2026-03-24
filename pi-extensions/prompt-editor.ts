@@ -17,6 +17,7 @@ import {
 	type OrchestratorModeConfig,
 	type RoleProfile,
 } from "./orchestrator-mode.ts";
+import { runInteractiveOrchestratorTask, shouldAutoRouteOrchestratorTask } from "./orchestrator-controller.ts";
 
 // =============================================================================
 // Modes
@@ -1422,6 +1423,37 @@ function setEditor(pi: ExtensionAPI, ctx: ExtensionContext, history: PromptEntry
 		for (const prompt of history) {
 			editor.addToHistory?.(prompt.text);
 		}
+		queueMicrotask(() => {
+			const marker = editor as PromptEditor & { __orchestratorSubmitWrapped?: boolean };
+			if (marker.__orchestratorSubmitWrapped) return;
+			marker.__orchestratorSubmitWrapped = true;
+			const originalSubmit = editor.onSubmit?.bind(editor);
+			if (!originalSubmit) return;
+
+			editor.onSubmit = async (text: string) => {
+				const config = await readOrchestratorModeConfig();
+				const trimmed = text.trim();
+				const shouldRoute =
+					getActiveBehaviorMode() === "orchestrator" &&
+					ctx.hasUI &&
+					shouldAutoRouteOrchestratorTask(trimmed, config.triggerPolicy);
+
+				if (!shouldRoute) {
+					return await originalSubmit(text);
+				}
+
+				try {
+					await runInteractiveOrchestratorTask(pi, ctx, trimmed, {
+						contextMode: "fork",
+						timeoutMs: 10 * 60 * 1000,
+						clearEditor: true,
+					});
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(message, "error");
+				}
+			};
+		});
 		return editor;
 	});
 }
