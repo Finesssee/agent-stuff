@@ -547,7 +547,7 @@ export default function contextExtension(pi: ExtensionAPI) {
 			};
 
 			if (!hasInteractiveUi(ctx)) {
-				pi.sendMessage({ customType: "context", content: makePlainText(), display: true }, { triggerTurn: false });
+				console.log(makePlainText());
 				return;
 			}
 

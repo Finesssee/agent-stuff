@@ -23,7 +23,6 @@
       "./pi-extensions/files.ts",
       "./pi-extensions/go-to-bed.ts",
       "./pi-extensions/loop.ts",
-      "./pi-extensions/multi-edit.ts",
       "./pi-extensions/notify.ts",
       "./pi-extensions/precise-edit.ts",
       "./pi-extensions/prompt-editor.ts",

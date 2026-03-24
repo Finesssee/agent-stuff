@@ -966,14 +966,7 @@ const showFileSelector = async (
 
 const runFileBrowser = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
 	if (!hasInteractiveUi(ctx)) {
-		pi.sendMessage(
-			{
-				customType: "files",
-				content: "Files requires interactive mode.",
-				display: true,
-			},
-			{ triggerTurn: false },
-		);
+		console.log("Files requires interactive mode.");
 		return;
 	}
 

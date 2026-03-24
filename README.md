@@ -34,13 +34,13 @@ Custom extensions for Pi Coding Agent are in [`pi-extensions`](pi-extensions):
 
 * [`answer.ts`](pi-extensions/answer.ts) - Interactive TUI for answering questions one by one.
 * [`btw.ts`](pi-extensions/btw.ts) - Simple `/btw` side-chat popover with optional summary injection back into the main chat on close.
-* [`context.ts`](pi-extensions/context.ts) - Context breakdown (extensions, skills, AGENTS.md/CLAUDE.md) + token usage, including loaded-skill highlighting. Falls back to plain text in headless `pi -p` usage.
+* [`context.ts`](pi-extensions/context.ts) - Context breakdown (extensions, skills, AGENTS.md/CLAUDE.md) + token usage, including loaded-skill highlighting. Prints plain text directly in headless `pi -p` usage.
 * [`control.ts`](pi-extensions/control.ts) - Session control helpers (list controllable sessions, etc.).
-* [`files.ts`](pi-extensions/files.ts) - Unified file browser with git status + session references and reveal/open/edit/diff actions. Requires a real interactive TTY and now fails fast in headless `pi -p` usage instead of hanging.
+* [`files.ts`](pi-extensions/files.ts) - Unified file browser with git status + session references and reveal/open/edit/diff actions. Requires a real interactive TTY and now prints a one-line headless error in `pi -p` usage instead of hanging.
 * [`split-fork.ts`](pi-extensions/split-fork.ts) - `/split-fork` command to branch the current session into a new pi process in a right-hand Ghostty split.
 * [`go-to-bed.ts`](pi-extensions/go-to-bed.ts) - Late-night safety guard with explicit confirmation after midnight.
 * [`loop.ts`](pi-extensions/loop.ts) - Prompt loop for rapid iterative coding with optional auto-continue.
-* [`multi-edit.ts`](pi-extensions/multi-edit.ts) - Replaces the built-in `edit` tool with batch `multi` edits and Codex-style `patch` support, including preflight validation.
+* [`multi-edit.ts`](pi-extensions/multi-edit.ts) - Replaces the built-in `edit` tool with batch `multi` edits and Codex-style `patch` support, including preflight validation. Kept repo-local and not packaged by default to avoid `edit` conflicts with other installed edit providers such as `morph-fast-apply`.
 * [`notify.ts`](pi-extensions/notify.ts) - Native desktop notifications when the agent finishes.
 * [`precise-edit.ts`](pi-extensions/precise-edit.ts) - Adds a separate `precise_edit` tool for exact single or multi-block replacements without replacing `multi-edit`.
 * [`prompt-editor.ts`](pi-extensions/prompt-editor.ts) - In-editor prompt mode selector with persistence, history, config, and shortcuts.
