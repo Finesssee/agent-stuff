@@ -7,6 +7,7 @@ All notable changes to agent-stuff are documented here.
 * Fixed `intercepted-commands/python` and `intercepted-commands/python3` to avoid recursive `uv` spawn loops by resolving a uv-managed non-shim interpreter for `uv run --python`.
 * Added a separate `behavior-modes` extension so `Plan` and `Orchestrator` runtime behavior is split cleanly from the prompt editor UI, while keeping the fixed `Normal`, `Plan`, and `Orchestrator` ring plus editor-level `Shift+Tab` cycling and editable Orchestrator role settings.
 * Fixed behavioral mode validation so routed `smart/...` role aliases such as `smart/opus-4-6` and `smart/composer-2-fast` no longer show bogus "unknown model" warnings in the live TUI.
+* Expanded behavioral mode virtual smart-model support so Orchestrator profiles can use newer routed families such as `smart/composer-2`, `smart/glm-5`, and `smart/minimax-m2.5` without false unknown-model warnings.
 * Added interactive Orchestrator-mode auto-routing so non-trivial prompts in the real Pi UI now dispatch through the orchestrator controller by default instead of relying on the model to remember the tool manually.
 * Fixed live TUI Orchestrator auto-routing by hooking the custom editor submit path directly instead of relying on Pi's internal `onSubmit` rebinding order.
 * Expanded `orchestrator-controller` into a `/orchestrate` command family with `status` and `inspect`, durable run artifacts under `~/.pi/agent/orchestrator/`, compact final summaries, and mission escalation into Mission Control when work is mission-shaped.

@@ -40,8 +40,11 @@ const KNOWN_SMART_PROVIDER_MODEL_IDS = new Set([
 	"gpt-5.3-codex-spark",
 	"opus-4-6",
 	"sonnet-4-6",
+	"composer-2",
 	"composer-2-fast",
+	"glm-5",
 	"kimi-k2.5",
+	"minimax-m2.5",
 ]);
 
 const DEFAULT_ORCHESTRATOR_MODE_CONFIG: OrchestratorModeConfig = {

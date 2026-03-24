@@ -60,7 +60,10 @@ test("behavior prompts include key orchestration guidance", () => {
 
 test("smart routed family ids are treated as known virtual mode models", () => {
 	assert.equal(isKnownBehaviorModeVirtualModel("smart", "opus-4-6"), true);
+	assert.equal(isKnownBehaviorModeVirtualModel("smart", "composer-2"), true);
 	assert.equal(isKnownBehaviorModeVirtualModel("smart", "composer-2-fast"), true);
+	assert.equal(isKnownBehaviorModeVirtualModel("smart", "glm-5"), true);
+	assert.equal(isKnownBehaviorModeVirtualModel("smart", "minimax-m2.5"), true);
 	assert.equal(isKnownBehaviorModeVirtualModel("smart", "made-up-model"), false);
 	assert.equal(isKnownBehaviorModeVirtualModel("cursor", "opus-4-6"), false);
 });
