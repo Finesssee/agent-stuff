@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { Text } from "@mariozechner/pi-tui";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { readOrchestratorModeConfig, type OrchestratorModeConfig, type RoleProfile } from "./orchestrator-mode.ts";
@@ -19,6 +20,8 @@ const PROMPT_TEMPLATE_SUBAGENT_STARTED_EVENT = "prompt-template:subagent:started
 const PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT = "prompt-template:subagent:response";
 const PROMPT_TEMPLATE_SUBAGENT_UPDATE_EVENT = "prompt-template:subagent:update";
 const PROMPT_TEMPLATE_SUBAGENT_CANCEL_EVENT = "prompt-template:subagent:cancel";
+export const ORCHESTRATOR_MESSAGE_TYPE = "orchestrator-controller";
+const ORCHESTRATOR_PLANNER_AGENT = "orchestrator-planner";
 
 const MISSION_CONTROL_LAUNCH_REQUEST_EVENT = "mission-control:launch-request";
 const MISSION_CONTROL_LAUNCH_RESPONSE_EVENT = "mission-control:launch-response";
@@ -605,6 +608,18 @@ async function requestMissionLaunch(
 	});
 }
 
+function renderOrchestratorMessage(pi: ExtensionAPI, ctx: ExtensionContext, text: string): void {
+	if (!ctx.hasUI) {
+		process.stdout.write(`${text.trim()}\n`);
+		return;
+	}
+	pi.sendMessage({
+		customType: ORCHESTRATOR_MESSAGE_TYPE,
+		content: text,
+		display: true,
+	});
+}
+
 function setOrchestratorWidget(ctx: ExtensionContext, record?: OrchestratorRunRecord): void {
 	if (!ctx.hasUI) return;
 	if (!record) {
@@ -682,7 +697,7 @@ async function runOrchestrator(
 			pi,
 			{
 				requestId: randomUUID(),
-				agent: "planner",
+				agent: ORCHESTRATOR_PLANNER_AGENT,
 				task: buildPlannerTask(task, config.maxWorkers),
 				context: contextMode,
 				model: formatRoleOverride(config.roles.planner),
@@ -890,10 +905,7 @@ export async function runInteractiveOrchestratorTask(
 		options.contextMode ?? "fork",
 		AbortSignal.timeout(options.timeoutMs ?? (10 * 60 * 1000)),
 	);
-	pi.sendMessage({
-		content: result.text,
-		display: true,
-	});
+	renderOrchestratorMessage(pi, ctx, result.text);
 	ctx.ui.notify(
 		result.details.verdict === "approved"
 			? "Orchestrator run approved by reviewer."
@@ -906,14 +918,7 @@ export async function runInteractiveOrchestratorTask(
 }
 
 function writeCommandOutput(ctx: ExtensionContext, pi: ExtensionAPI, text: string): void {
-	if (ctx.hasUI) {
-		pi.sendMessage({
-			content: text,
-			display: true,
-		});
-		return;
-	}
-	process.stdout.write(`${text.trim()}\n`);
+	renderOrchestratorMessage(pi, ctx, text);
 }
 
 export default function registerOrchestratorController(pi: ExtensionAPI): void {
@@ -922,6 +927,12 @@ export default function registerOrchestratorController(pi: ExtensionAPI): void {
 		context: Type.Optional(Type.Union([Type.Literal("fresh"), Type.Literal("fork")], {
 			description: "Delegation context for spawned subagents. Defaults to fork.",
 		})),
+	});
+
+	pi.registerMessageRenderer(ORCHESTRATOR_MESSAGE_TYPE, (message, _options, theme) => {
+		const title = theme.fg("accent", theme.bold("Orchestrator"));
+		const body = typeof message.content === "string" ? message.content : JSON.stringify(message.content, null, 2);
+		return new Text(`${title}\n\n${body}`, 0, 0);
 	});
 
 	pi.registerTool({

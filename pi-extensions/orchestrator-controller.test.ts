@@ -4,8 +4,10 @@ import {
 	extractJsonObject,
 	normalizeOrchestratorPlan,
 	normalizeOrchestratorReview,
+	ORCHESTRATOR_MESSAGE_TYPE,
 	shouldAutoRouteOrchestratorTask,
 } from "./orchestrator-controller.ts";
+import registerOrchestratorController from "./orchestrator-controller.ts";
 import { shouldApplyBehaviorModePrompt } from "./orchestrator-mode.ts";
 
 test("extractJsonObject parses fenced JSON payloads", () => {
@@ -81,4 +83,16 @@ test("shouldAutoRouteOrchestratorTask routes non-trivial execution asks", () => 
 
 test("shouldAutoRouteOrchestratorTask respects always mode", () => {
 	assert.equal(shouldAutoRouteOrchestratorTask("hello there", "always"), true);
+});
+
+test("registerOrchestratorController registers a custom orchestrator renderer", () => {
+	const renderers: string[] = [];
+	registerOrchestratorController({
+		registerMessageRenderer(type: string) {
+			renderers.push(type);
+		},
+		registerTool() {},
+		registerCommand() {},
+	} as any);
+	assert.deepEqual(renderers, [ORCHESTRATOR_MESSAGE_TYPE]);
 });
