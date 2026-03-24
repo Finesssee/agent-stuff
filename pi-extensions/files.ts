@@ -79,6 +79,8 @@ const PATH_REGEX = /(?:^|[\s"'`([{<])((?:~|\/)[^\s"'`<>)}\]]+)/g;
 
 const MAX_EDIT_BYTES = 40 * 1024 * 1024;
 
+const hasInteractiveUi = (ctx: ExtensionContext): boolean => ctx.hasUI && process.stdout.isTTY === true && process.stdin.isTTY === true;
+
 const extractFileReferencesFromText = (text: string): string[] => {
 	const refs: string[] = [];
 
@@ -963,8 +965,15 @@ const showFileSelector = async (
 };
 
 const runFileBrowser = async (pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> => {
-	if (!ctx.hasUI) {
-		ctx.ui.notify("Files requires interactive mode", "error");
+	if (!hasInteractiveUi(ctx)) {
+		pi.sendMessage(
+			{
+				customType: "files",
+				content: "Files requires interactive mode.",
+				display: true,
+			},
+			{ triggerTurn: false },
+		);
 		return;
 	}
 

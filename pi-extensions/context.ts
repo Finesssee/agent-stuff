@@ -214,6 +214,10 @@ function shortenPath(p: string, cwd: string): string {
 	return rp;
 }
 
+function hasInteractiveUi(ctx: ExtensionContext | ExtensionCommandContext): boolean {
+	return ctx.hasUI && process.stdout.isTTY === true && process.stdin.isTTY === true;
+}
+
 function renderUsageBar(
 	theme: any,
 	parts: { system: number; tools: number; convo: number; remaining: number },
@@ -542,7 +546,7 @@ export default function contextExtension(pi: ExtensionAPI) {
 				return lines.join("\n");
 			};
 
-			if (!ctx.hasUI) {
+			if (!hasInteractiveUi(ctx)) {
 				pi.sendMessage({ customType: "context", content: makePlainText(), display: true }, { triggerTurn: false });
 				return;
 			}
