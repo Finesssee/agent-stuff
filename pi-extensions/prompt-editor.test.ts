@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+	buildOrchestratorDraftCommand,
 	buildSteeringDraftCommand,
 	cycleSteeringComposeMode,
 	formatPromptEditorLabel,
@@ -17,6 +18,15 @@ test("buildSteeringDraftCommand rewrites queued and power steer drafts", () => {
 	assert.equal(buildSteeringDraftCommand("qsteer", "refocus on tests"), "/qsteer refocus on tests");
 	assert.equal(buildSteeringDraftCommand("psteer", "refocus on tests"), "/psteer refocus on tests");
 	assert.equal(buildSteeringDraftCommand("qsteer", "   "), undefined);
+});
+
+test("buildOrchestratorDraftCommand only rewrites non-trivial drafts", () => {
+	assert.equal(buildOrchestratorDraftCommand("what time is it?", "non-trivial"), undefined);
+	assert.equal(
+		buildOrchestratorDraftCommand("implement the smart model selector fix and add tests", "non-trivial"),
+		"/orchestrate implement the smart model selector fix and add tests",
+	);
+	assert.equal(buildOrchestratorDraftCommand("hello", "always"), "/orchestrate hello");
 });
 
 test("formatPromptEditorLabel appends steering mode only when armed", () => {

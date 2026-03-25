@@ -18,7 +18,7 @@ import {
 	type OrchestratorModeConfig,
 	type RoleProfile,
 } from "./orchestrator-mode.ts";
-import { runInteractiveOrchestratorTask, shouldAutoRouteOrchestratorTask } from "./orchestrator-controller.ts";
+import { shouldAutoRouteOrchestratorTask } from "./orchestrator-controller.ts";
 
 // =============================================================================
 // Modes
@@ -408,6 +408,15 @@ export function buildSteeringDraftCommand(mode: SteeringComposeMode, draft: stri
 	const trimmed = draft.trim();
 	if (!trimmed || mode === "normal") return undefined;
 	return `/${mode} ${trimmed}`;
+}
+
+export function buildOrchestratorDraftCommand(
+	draft: string,
+	triggerPolicy: OrchestratorModeConfig["triggerPolicy"],
+): string | undefined {
+	const trimmed = draft.trim();
+	if (!trimmed) return undefined;
+	return shouldAutoRouteOrchestratorTask(trimmed, triggerPolicy) ? `/orchestrate ${trimmed}` : undefined;
 }
 
 export function formatPromptEditorLabel(mode: string, steeringMode: SteeringComposeMode): string {
@@ -1578,16 +1587,14 @@ function installPromptSubmitRouter(editor: PromptEditor, pi: ExtensionAPI, ctx: 
 			return;
 		}
 
-		const trimmed = draft.trim();
-
 		void (async () => {
 			const config = await readOrchestratorModeConfig();
-			const shouldRoute =
-				getActiveBehaviorMode() === "orchestrator" &&
-				ctx.hasUI &&
-				shouldAutoRouteOrchestratorTask(trimmed, config.triggerPolicy);
+			const orchestratorCommand =
+				getActiveBehaviorMode() === "orchestrator" && ctx.hasUI
+					? buildOrchestratorDraftCommand(draft, config.triggerPolicy)
+					: undefined;
 
-			if (!shouldRoute) {
+			if (!orchestratorCommand) {
 				editor.setSteeringComposeMode("normal");
 				originalSubmitValue();
 				return;
@@ -1595,22 +1602,12 @@ function installPromptSubmitRouter(editor: PromptEditor, pi: ExtensionAPI, ctx: 
 
 			const originalOnSubmit = editor.onSubmit;
 			editor.onSubmit = undefined;
+			editor.setText(orchestratorCommand);
 			try {
 				originalSubmitValue();
 			} finally {
 				editor.onSubmit = originalOnSubmit;
 				editor.setSteeringComposeMode("normal");
-			}
-
-			try {
-				await runInteractiveOrchestratorTask(pi, ctx, trimmed, {
-					contextMode: "fork",
-					timeoutMs: 10 * 60 * 1000,
-					clearEditor: false,
-				});
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(message, "error");
 			}
 		})();
 	};
