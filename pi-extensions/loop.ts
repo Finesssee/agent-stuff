@@ -12,6 +12,7 @@ import type { ExtensionAPI, ExtensionContext, SessionSwitchEvent } from "@marioz
 import { compact } from "@mariozechner/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import { buildPiUiWidgetLines } from "./pi-native-ui.ts";
 
 type LoopMode = "tests" | "custom" | "self";
 
@@ -154,12 +155,11 @@ function updateStatus(ctx: ExtensionContext, state: LoopStateData): void {
 		return;
 	}
 	const loopCount = state.loopCount ?? 0;
-	const turnText = `(turn ${loopCount})`;
 	const summary = state.summary?.trim();
-	const text = summary
-		? `Loop active: ${summary} ${turnText}`
-		: `Loop active ${turnText}`;
-	ctx.ui.setWidget("loop", [ctx.ui.theme.fg("accent", text)]);
+	ctx.ui.setWidget("loop", buildPiUiWidgetLines(`Loop · ${state.mode}`, [
+		summary ? `Breakout: ${summary}` : undefined,
+		`Turn: ${loopCount}`,
+	]));
 }
 
 async function loadState(ctx: ExtensionContext): Promise<LoopStateData> {

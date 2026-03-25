@@ -215,7 +215,7 @@ test("renderOrchestratorMessageText shows structured timeline and metadata", () 
 	const text = renderOrchestratorMessageText(buildOrchestratorMessageContent("result", record));
 	assert.match(text, /State: approved/);
 	assert.match(text, /Step: Reviewer approved the run/);
-	assert.match(text, /Timeline:/);
+	assert.match(text, /\nTimeline\n/);
 	assert.match(text, /- Planner finished/);
 	assert.match(text, /Inspect: \/orchestrate inspect orch_demo/);
 });

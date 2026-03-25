@@ -40,6 +40,7 @@ import {
 } from "@mariozechner/pi-tui";
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { buildPiUiWidgetLines } from "./pi-native-ui.ts";
 
 // State to track fresh session review (where we branched from).
 // Module-level state means only one review can be active at a time.
@@ -73,23 +74,14 @@ function setReviewWidget(ctx: ExtensionContext, active: boolean) {
 		ctx.ui.setWidget("review", undefined);
 		return;
 	}
-
-	ctx.ui.setWidget("review", (_tui, theme) => {
-		const message = reviewLoopInProgress
-			? "Review session active (loop fixing running)"
+	ctx.ui.setWidget("review", buildPiUiWidgetLines("Review · active", [
+		reviewLoopInProgress
+			? "Loop fix: running"
 			: reviewLoopFixingEnabled
-				? "Review session active (loop fixing enabled), return with /end-review"
-				: "Review session active, return with /end-review";
-		const text = new Text(theme.fg("warning", message), 0, 0);
-		return {
-			render(width: number) {
-				return text.render(width);
-			},
-			invalidate() {
-				text.invalidate();
-			},
-		};
-	});
+			? "Loop fix: armed"
+			: "Loop fix: off",
+		"Exit: /end-review",
+	]));
 }
 
 function getReviewState(ctx: ExtensionContext): ReviewSessionState | undefined {

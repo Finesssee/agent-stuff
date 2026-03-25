@@ -62,10 +62,9 @@ test("buildOrchestratorWidgetLines renders a compact live progress panel", () =>
 
 	const lines = buildOrchestratorWidgetLines(record);
 	assert.deepEqual(lines, [
-		"Orchestrator",
+		"Orchestrator · review",
 		"Task: Audit the orchestrator widget",
 		"Step: Reviewer checking results",
-		"Phase: review",
 		"Workers: 2 active",
 		"Review: 1/2",
 	]);

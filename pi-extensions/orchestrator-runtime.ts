@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { buildPiUiWidgetLines } from "./pi-native-ui.ts";
 
 export type OrchestratorRunVerdict = "approved" | "revise" | "escalated" | "failed";
 
@@ -209,16 +210,20 @@ function shortenWidgetText(value: string, maxLength = 52): string {
 export function buildOrchestratorWidgetLines(record: OrchestratorRunRecord): string[] {
 	const latestEvent = record.timeline.at(-1);
 	const step = record.currentStep || latestEvent?.label || record.reviewerSummary || record.plannerSummary;
-	const lines = ["Orchestrator", `Task: ${shortenWidgetText(record.taskSummary || record.task || record.runId)}`];
-	if (step) lines.push(`Step: ${shortenWidgetText(step)}`);
-	lines.push(`Phase: ${record.phase}`);
-	if (record.workerCount > 0) lines.push(`Workers: ${record.workerCount} active`);
-	if (record.reviewCycle > 0) {
-		lines.push(`Review: ${record.reviewCycle}/${record.reviewRetryCap}`);
-	} else if (record.missionId) {
-		lines.push(`Mission: ${shortenWidgetText(record.missionId, 40)}`);
-	} else if (latestEvent?.detail) {
-		lines.push(`Latest: ${shortenWidgetText(latestEvent.detail)}`);
-	}
-	return lines.slice(0, 6);
+	return buildPiUiWidgetLines(
+		`Orchestrator · ${record.phase}`,
+		[
+			`Task: ${shortenWidgetText(record.taskSummary || record.task || record.runId)}`,
+			step ? `Step: ${shortenWidgetText(step)}` : undefined,
+			record.workerCount > 0 ? `Workers: ${record.workerCount} active` : undefined,
+			record.reviewCycle > 0
+				? `Review: ${record.reviewCycle}/${record.reviewRetryCap}`
+				: record.missionId
+				? `Mission: ${shortenWidgetText(record.missionId, 40)}`
+				: latestEvent?.detail
+				? `Latest: ${shortenWidgetText(latestEvent.detail)}`
+				: undefined,
+		],
+		5,
+	);
 }

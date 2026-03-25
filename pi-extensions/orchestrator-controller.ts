@@ -4,6 +4,7 @@ import { Text } from "@mariozechner/pi-tui";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { readOrchestratorModeConfig, type OrchestratorModeConfig, type RoleProfile } from "./orchestrator-mode.ts";
+import { renderPiUiPanel, renderPiUiPanelText, type PiUiPanel } from "./pi-native-ui.ts";
 import {
 	buildOrchestratorWidgetLines,
 	finalizeRun,
@@ -290,37 +291,46 @@ function formatTimelineEvent(event: OrchestratorTimelineEvent): string {
 	return `- ${event.label}`;
 }
 
+function buildOrchestratorPanel(content: OrchestratorMessageContent): PiUiPanel {
+	const progressRows = [
+		{ label: "State", value: content.state, tone: content.state === "approved" ? "success" : content.state === "failed" ? "error" : content.state === "revise" || content.state === "escalated" ? "warning" : "text" },
+		content.runId ? { label: "Run", value: content.runId, tone: "muted" as const } : undefined,
+		{ label: "Task", value: content.taskSummary, tone: "text" as const },
+		content.phase ? { label: "Phase", value: content.phase, tone: "muted" as const } : undefined,
+		content.currentStep ? { label: "Step", value: content.currentStep, tone: "text" as const } : undefined,
+		content.summary && content.summary !== content.taskSummary ? { label: "Summary", value: content.summary, tone: "muted" as const } : undefined,
+		content.workerCount > 0 ? { label: "Workers", value: `${content.workerCount}`, tone: "text" as const } : undefined,
+		content.workerModels.length > 0 ? { label: "Worker models", value: formatWorkerModelList(content.workerModels), tone: "muted" as const } : undefined,
+		content.reviewCycle > 0 ? { label: "Review", value: `${content.reviewCycle}/${content.reviewRetryCap}`, tone: "text" as const } : undefined,
+		content.missionId ? { label: "Mission", value: content.missionId, tone: "warning" as const } : undefined,
+		content.missionMode ? { label: "Mission mode", value: content.missionMode, tone: "muted" as const } : undefined,
+		content.missionReason ? { label: "Mission reason", value: content.missionReason, tone: "muted" as const } : undefined,
+		content.lastRunId ? { label: "Last run", value: content.lastRunId, tone: "muted" as const } : undefined,
+		content.lastVerdict ? { label: "Last verdict", value: content.lastVerdict, tone: "muted" as const } : undefined,
+	].filter(Boolean);
+
+	return {
+		title: content.title,
+		kicker: content.kind === "inspect" ? "Detailed run record" : content.kind === "status" ? "Live controller status" : "Final controller verdict",
+		sections: [
+			{ title: "Run", rows: progressRows },
+			content.blockingFindings.length > 0
+				? { title: "Blocking findings", items: content.blockingFindings }
+				: undefined,
+			content.timeline.length > 0
+				? { title: "Timeline", items: content.timeline.map((event) => event.detail ? `${event.label} — ${event.detail}` : event.label) }
+				: undefined,
+			content.errorText
+				? { title: "Error", rows: [{ label: "Detail", value: content.errorText, tone: "error" }] }
+				: undefined,
+		].filter(Boolean),
+		footer: content.inspectHint ? `Inspect: ${content.inspectHint}` : undefined,
+	};
+}
+
 export function renderOrchestratorMessageText(content: OrchestratorMessageContent | string): string {
 	if (typeof content === "string") return content.trim();
-	const lines = [
-		`# ${content.title}`,
-		"",
-		`State: ${content.state}`,
-	];
-	if (content.runId) lines.push(`Run: ${content.runId}`);
-	lines.push(`Task: ${content.taskSummary}`);
-	if (content.phase) lines.push(`Phase: ${content.phase}`);
-	if (content.currentStep) lines.push(`Step: ${content.currentStep}`);
-	if (content.summary && content.summary !== content.taskSummary) lines.push(`Summary: ${content.summary}`);
-	if (content.workerCount > 0) lines.push(`Workers: ${content.workerCount}`);
-	if (content.workerModels.length > 0) lines.push(`Worker models: ${formatWorkerModelList(content.workerModels)}`);
-	if (content.reviewCycle > 0) lines.push(`Review: ${content.reviewCycle}/${content.reviewRetryCap}`);
-	if (content.missionId) lines.push(`Mission: ${content.missionId}`);
-	if (content.missionMode) lines.push(`Mission mode: ${content.missionMode}`);
-	if (content.missionReason) lines.push(`Mission reason: ${content.missionReason}`);
-	if (content.lastRunId) lines.push(`Last run: ${content.lastRunId}`);
-	if (content.lastVerdict) lines.push(`Last verdict: ${content.lastVerdict}`);
-	if (content.blockingFindings.length > 0) {
-		lines.push("", "Blocking findings:");
-		for (const finding of content.blockingFindings) lines.push(`- ${finding}`);
-	}
-	if (content.timeline.length > 0) {
-		lines.push("", "Timeline:");
-		for (const event of content.timeline) lines.push(formatTimelineEvent(event));
-	}
-	if (content.errorText) lines.push("", `Error: ${content.errorText}`);
-	if (content.inspectHint) lines.push("", `Inspect: ${content.inspectHint}`);
-	return lines.join("\n");
+	return renderPiUiPanelText(buildOrchestratorPanel(content));
 }
 
 export function extractJsonObject(text: string): unknown | null {
@@ -1164,9 +1174,8 @@ export default function registerOrchestratorController(pi: ExtensionAPI): void {
 			message.details && typeof message.details === "object"
 				? (message.details as OrchestratorMessageContent)
 				: undefined;
-		const body = renderOrchestratorMessageText(
-			payload ?? (typeof message.content === "string" ? message.content : String(message.content ?? "")),
-		);
+		if (payload) return renderPiUiPanel(_theme, buildOrchestratorPanel(payload));
+		const body = renderOrchestratorMessageText(typeof message.content === "string" ? message.content : String(message.content ?? ""));
 		return new Text(body, 0, 0);
 	});
 
