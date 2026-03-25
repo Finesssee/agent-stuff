@@ -5,6 +5,7 @@ import {
 	buildSteeringDraftCommand,
 	cycleSteeringComposeMode,
 	formatPromptEditorLabel,
+	rewritePromptSubmitText,
 } from "./prompt-editor.ts";
 
 test("cycleSteeringComposeMode advances through normal, qsteer, psteer, then back to normal", () => {
@@ -33,4 +34,30 @@ test("formatPromptEditorLabel appends steering mode only when armed", () => {
 	assert.equal(formatPromptEditorLabel("orchestrator", "normal"), "orchestrator");
 	assert.equal(formatPromptEditorLabel("orchestrator", "qsteer"), "orchestrator · qsteer");
 	assert.equal(formatPromptEditorLabel("orchestrator", "psteer"), "orchestrator · psteer");
+});
+
+test("rewritePromptSubmitText prioritizes steering over orchestrator rewrite", () => {
+	assert.equal(
+		rewritePromptSubmitText({
+			draft: "implement the smart model selector fix and add tests",
+			steeringMode: "qsteer",
+			behaviorMode: "orchestrator",
+			hasUI: true,
+			triggerPolicy: "non-trivial",
+		}),
+		"/qsteer implement the smart model selector fix and add tests",
+	);
+});
+
+test("rewritePromptSubmitText rewrites real orchestrator submissions without truncating the draft", () => {
+	assert.equal(
+		rewritePromptSubmitText({
+			draft: "Add an average(numbers) helper, make average([]) throw a clear error, update tests, and run npm test.",
+			steeringMode: "normal",
+			behaviorMode: "orchestrator",
+			hasUI: true,
+			triggerPolicy: "non-trivial",
+		}),
+		"/orchestrate Add an average(numbers) helper, make average([]) throw a clear error, update tests, and run npm test.",
+	);
 });

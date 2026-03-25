@@ -512,6 +512,12 @@ function buildReviewerTask(
 ): string {
 	const lines = [
 		"Review the orchestrated work product.",
+		"Stay tightly scoped to the current user task.",
+		"Use worker output as the primary evidence, then inspect only the repo files needed to confirm or refute it.",
+		"Do not update files, notes, todos, or progress trackers as part of this review.",
+		"Ignore unrelated local artifacts such as progress.md, scratch notes, or stale repo planning files unless the user task explicitly mentions them.",
+		"Do not treat an all-untracked scratch repo or missing git baseline as a blocking finding by itself.",
+		"Do not invent cleanup work outside the current task.",
 		"Return ONLY valid JSON with this exact shape:",
 		'{"verdict":"approved"|"revise","summary":"...","blockingFindings":["..."],"repairTasks":["..."]}',
 		`Provide at most ${maxWorkers} repairTasks.`,

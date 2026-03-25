@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ModelSelectEvent, ThinkingLevel } from "@mariozechner/pi-coding-agent";
 import { CustomEditor, ModelSelectorComponent, SettingsManager } from "@mariozechner/pi-coding-agent";
 import { Key, matchesKey } from "@mariozechner/pi-tui";
+import { getModel, type Api } from "@mariozechner/pi-ai";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
@@ -419,6 +420,21 @@ export function buildOrchestratorDraftCommand(
 	return shouldAutoRouteOrchestratorTask(trimmed, triggerPolicy) ? `/orchestrate ${trimmed}` : undefined;
 }
 
+export function rewritePromptSubmitText(options: {
+	draft: string;
+	steeringMode: SteeringComposeMode;
+	behaviorMode: BuiltinModeName;
+	hasUI: boolean;
+	triggerPolicy: OrchestratorModeConfig["triggerPolicy"];
+}): string {
+	const steeringCommand = buildSteeringDraftCommand(options.steeringMode, options.draft);
+	if (steeringCommand) return steeringCommand;
+	if (options.behaviorMode === "orchestrator" && options.hasUI) {
+		return buildOrchestratorDraftCommand(options.draft, options.triggerPolicy) ?? options.draft;
+	}
+	return options.draft;
+}
+
 export function formatPromptEditorLabel(mode: string, steeringMode: SteeringComposeMode): string {
 	if (steeringMode === "normal") return formatModeLabel(mode);
 	return `${formatModeLabel(mode)} · ${steeringMode}`;
@@ -686,14 +702,16 @@ async function applyMode(pi: ExtensionAPI, ctx: ExtensionContext, mode: string):
 	try {
 		// Apply model
 		if (spec.provider && spec.modelId) {
-			const m = ctx.modelRegistry.find(spec.provider, spec.modelId);
+			const m =
+				ctx.modelRegistry.find(spec.provider, spec.modelId)
+				?? getModel(spec.provider as Api, spec.modelId);
 			if (m) {
 				const ok = await pi.setModel(m);
 				modelAppliedOk = ok;
 				if (!ok && ctx.hasUI) {
 					ctx.ui.notify(`No API key available for ${spec.provider}/${spec.modelId}`, "warning");
 				}
-			} else if (!isKnownBehaviorModeVirtualModel(spec.provider, spec.modelId)) {
+			} else {
 				modelAppliedOk = false;
 				if (ctx.hasUI) {
 					ctx.ui.notify(`Mode "${mode}" references unknown model ${spec.provider}/${spec.modelId}`, "warning");
@@ -1318,6 +1336,7 @@ interface PromptEntry {
 class PromptEditor extends CustomEditor {
 	public modeLabelProvider?: () => string;
 	public onCycleBehaviorMode?: () => void | Promise<void>;
+	public rewriteSubmittedText?: (text: string) => string | Promise<string>;
 	/**
 	 * Color function for the mode label. If unset, the label inherits the border color.
 	 * We use this to keep the label consistent (e.g. same as the footer/status bar).
@@ -1370,6 +1389,21 @@ class PromptEditor extends CustomEditor {
 		}
 		if (matchesKey(data, Key.tab) || matchesKey(data, "tab")) {
 			this.cycleSteeringComposeMode();
+			return;
+		}
+		const keybindings = this as CustomEditor & {
+			keybindings?: { matches: (value: string, action: string) => boolean };
+		};
+		const isSubmit =
+			(keybindings.keybindings?.matches(data, "tui.input.submit") ?? false) || matchesKey(data, Key.enter);
+		if (isSubmit && !this.isShowingAutocomplete() && this.onSubmit) {
+			const submittedText = this.getText();
+			this.setText("");
+			this.requestRenderNow();
+			void Promise.resolve(this.rewriteSubmittedText?.(submittedText) ?? submittedText).then((rewrittenText) => {
+				this.setSteeringComposeMode("normal");
+				this.onSubmit?.(rewrittenText);
+			});
 			return;
 		}
 		super.handleInput(data);
@@ -1562,54 +1596,19 @@ function historiesMatch(a: PromptEntry[], b: PromptEntry[]): boolean {
 function installPromptSubmitRouter(editor: PromptEditor, pi: ExtensionAPI, ctx: ExtensionContext): void {
 	const marker = editor as PromptEditor & {
 		__promptSubmitWrapped?: boolean;
-		submitValue?: (() => void) | undefined;
 	};
 	if (marker.__promptSubmitWrapped) return;
 	marker.__promptSubmitWrapped = true;
 
-	const originalSubmitValue = typeof marker.submitValue === "function" ? marker.submitValue.bind(editor) : undefined;
-	if (!originalSubmitValue) return;
-
-	marker.submitValue = () => {
-		const draft = editor.getExpandedText();
-		const steeringCommand = buildSteeringDraftCommand(editor.getSteeringComposeMode(), draft);
-
-		if (steeringCommand) {
-			const originalOnSubmit = editor.onSubmit;
-			editor.onSubmit = undefined;
-			editor.setText(steeringCommand);
-			try {
-				originalSubmitValue();
-			} finally {
-				editor.onSubmit = originalOnSubmit;
-				editor.setSteeringComposeMode("normal");
-			}
-			return;
-		}
-
-		void (async () => {
-			const config = await readOrchestratorModeConfig();
-			const orchestratorCommand =
-				getActiveBehaviorMode() === "orchestrator" && ctx.hasUI
-					? buildOrchestratorDraftCommand(draft, config.triggerPolicy)
-					: undefined;
-
-			if (!orchestratorCommand) {
-				editor.setSteeringComposeMode("normal");
-				originalSubmitValue();
-				return;
-			}
-
-			const originalOnSubmit = editor.onSubmit;
-			editor.onSubmit = undefined;
-			editor.setText(orchestratorCommand);
-			try {
-				originalSubmitValue();
-			} finally {
-				editor.onSubmit = originalOnSubmit;
-				editor.setSteeringComposeMode("normal");
-			}
-		})();
+	editor.rewriteSubmittedText = async (text: string) => {
+		const config = await readOrchestratorModeConfig();
+		return rewritePromptSubmitText({
+			draft: text,
+			steeringMode: editor.getSteeringComposeMode(),
+			behaviorMode: getActiveBehaviorMode(),
+			hasUI: ctx.hasUI,
+			triggerPolicy: config.triggerPolicy,
+		});
 	};
 }
 
